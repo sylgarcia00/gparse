@@ -9,9 +9,8 @@ import (
 // public Parse/Evaluate entry point by comparing the result against an
 // expected value inside the expression.
 //
-// Only integer literals are used here because the lexer does not yet parse
-// decimal float literals (e.g. "2.5"); float and int/float promotion behavior
-// is covered directly in TestArithmeticOpResultTypes.
+// Float-literal lexing is exercised separately in TestFloatLiteralLexing;
+// int/float promotion behavior is covered in TestArithmeticOpResultTypes.
 func TestArithmeticThroughParse(t *testing.T) {
 	tests := []struct {
 		expr           string
@@ -57,6 +56,46 @@ func TestArithmeticThroughParse(t *testing.T) {
 				t.Fatalf("expected %v, got %v", test.expectedResult, result)
 			}
 		})
+	}
+}
+
+// TestFloatLiteralLexing verifies decimal float literals now lex and flow
+// through the arithmetic/comparison path via the public Parse entry point.
+func TestFloatLiteralLexing(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: "2.5 == 2.5", expectedResult: true},
+		{expr: "2.5 + 0.5 == 3", expectedResult: true},
+		{expr: "0.5 == 0.5", expectedResult: true},
+		{expr: "1.5 * 2 == 3", expectedResult: true},
+		{expr: "2.5 == 2", expectedResult: false},
+		// A trailing decimal point still lexes (ParseFloat accepts "3.").
+		{expr: "3. == 3", expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
+// TestFloatLiteralBaseError verifies a decimal point on a non-base-10 literal
+// is rejected with a clear message rather than silently splitting the token.
+func TestFloatLiteralBaseError(t *testing.T) {
+	_, err := Parse("0x1.5 == 0")
+	if err == nil {
+		t.Fatalf("expected an error for a hex literal with a decimal point")
 	}
 }
 

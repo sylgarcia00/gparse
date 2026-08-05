@@ -472,17 +472,16 @@ func parseNumber(expr []rune, index int) (newIndex int, token Token, err error) 
 
 	isFloat := false
 
-	// Find the end of the numerical literal:
-	for ; i < len(expr) && isNumberFn(expr[i]); i++ {
-		// Consume the decimal part of the number:
-		if expr[i] == '.' {
-			i++
+	// Find the end of the numerical literal. A single '.' switches to the
+	// float path; the base != 10 check below rejects e.g. `0x1.5` with a
+	// clear message rather than silently splitting the token.
+	for ; i < len(expr); i++ {
+		if expr[i] == '.' && !isFloat {
 			isFloat = true
+			continue
+		}
 
-			for i < len(expr) && isNumberFn(expr[i]) {
-				i++
-			}
-
+		if !isNumberFn(expr[i]) {
 			break
 		}
 	}
