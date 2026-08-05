@@ -1,4 +1,4 @@
-package cparse
+package gparse
 
 type ReservedWordParser func(expr []rune, parsingCtx *ParsingCtx, rpnBuilder *RPNBuilder, index int) (newIndex int, err error)
 

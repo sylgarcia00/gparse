@@ -1,4 +1,4 @@
-# cparse-go
+# gparse
 
 A Go port of [cparse](https://github.com/cparse/cparse), a shunting-yard
 expression parser and evaluator.

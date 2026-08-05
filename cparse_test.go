@@ -1,4 +1,4 @@
-package cparse
+package gparse
 
 import (
 	"encoding/json"

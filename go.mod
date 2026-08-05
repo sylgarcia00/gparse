@@ -1,3 +1,3 @@
-module github.com/vingarcia/cparse-go
+module github.com/vingarcia/gparse
 
 go 1.26.5
