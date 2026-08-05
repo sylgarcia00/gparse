@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-
 )
 
 type Token interface {
@@ -174,8 +173,28 @@ func (v varToken) String() string {
 	return out
 }
 
+// resolveInScopeChain looks up key in vars, following the "$parent"
+// link to enclosing scopes on a miss. Returns nil if not found in any scope.
+func resolveInScopeChain(vars map[string]Token, key string) Token {
+	for vars != nil {
+		if value, ok := vars[key]; ok {
+			return value
+		}
+
+		parent, ok := vars["$parent"].(mapToken)
+		if !ok {
+			return nil
+		}
+		vars = parent
+	}
+	return nil
+}
+
 func (v varToken) Resolve(vars map[string]Token) Token {
-	value := vars[v[0]]
+	// The first identifier climbs the scope chain via "$parent"
+	// (see mapToken.getChildMap), mirroring cparse's parent-scope
+	// resolution. Nested field access below stays within one map.
+	value := resolveInScopeChain(vars, v[0])
 	if lazy, ok := value.(lazyJsonToken); ok {
 		value = lazy.Value()
 	}
