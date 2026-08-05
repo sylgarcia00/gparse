@@ -365,20 +365,10 @@ func evaluate(originalRpn []Token, vars map[string]Token) (_ Token, err error) {
 }
 
 func findAndRunOperator(op opToken, left Token, right Token, data *EvaluationData) (Token, error) {
-	opGroup := operators[op]
-	if opGroup == nil {
+	opFunc := operators[op]
+	if opFunc == nil {
 		return nil, SyntaxErr("unrecognized operator", map[string]any{
 			"op": op,
-		})
-	}
-
-	opFunc := opGroup[newOpTypePair(left, right)]
-
-	if opFunc == nil {
-		return nil, SyntaxErr("unsupported types for operator", map[string]any{
-			"op":         op,
-			"leftToken":  left,
-			"rightToken": right,
 		})
 	}
 
