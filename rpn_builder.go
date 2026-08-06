@@ -106,7 +106,8 @@ func (r *RPNBuilder) handleOpStack(op string) {
 	var currentOp string
 
 	l := len(r.opStack)
-	for ; l > 0 && opPrecedence[op] >= opPrecedence[r.opStack[l-1]]; l-- {
+	for ; l > 0 && !isOpenBracket(r.opStack[l-1]) &&
+		opPrecedence[op] >= opPrecedence[r.opStack[l-1]]; l-- {
 		currentOp = normalizeOp(r.opStack[l-1])
 		r.rpn = append(r.rpn, opToken(currentOp))
 	}
@@ -129,6 +130,12 @@ func (r *RPNBuilder) FinishAndReturnRPN(expr []rune, index int, parsingCtx Parsi
 	var currentOp string
 
 	for ; l > 0; l-- {
+		if isOpenBracket(r.opStack[l-1]) {
+			return nil, SyntaxErr("unmatched open bracket in the expression", map[string]any{
+				"bracketType": r.opStack[l-1],
+				"pos":         parsingCtx.FormatLineCol(index),
+			})
+		}
 		currentOp = normalizeOp(r.opStack[l-1])
 		r.rpn = append(r.rpn, opToken(currentOp))
 	}
@@ -201,6 +208,14 @@ func (r *RPNBuilder) closeBracket(bracket string) error {
 }
 
 // * * * * * Static parsing helpers: * * * * * //
+
+// isOpenBracket reports whether op is one of the open-bracket markers pushed
+// onto the opStack by openBracket. Operators must never pop past an open
+// bracket while building the RPN, otherwise a grouping "(" would leak into the
+// output as a bogus opToken.
+func isOpenBracket(op string) bool {
+	return op == "(" || op == "[" || op == "{"
+}
 
 func normalizeOp(op string) string {
 	// The prefix L and R is used for denoting left and right unary operators

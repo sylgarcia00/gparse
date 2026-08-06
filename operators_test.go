@@ -380,3 +380,51 @@ func TestLogicalThroughParse(t *testing.T) {
 		})
 	}
 }
+
+// TestParenGroupingThroughParse exercises parenthesis grouping end-to-end
+// through the public Parse/Evaluate API: grouping that overrides precedence,
+// grouping that unblocks the left-unary "!" operator, and nested groups.
+func TestParenGroupingThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		// Grouping overrides arithmetic-vs-comparison precedence.
+		{expr: "(1 + 2) < 4", expectedResult: true},
+		{expr: "(1 + 2) < 3", expectedResult: false},
+		// Grouping around a full comparison.
+		{expr: "(1 < 2)", expectedResult: true},
+		// "!" is only reachable through Parse via a grouped operand.
+		{expr: "!(1 > 2)", expectedResult: true},
+		{expr: "!(1 < 2)", expectedResult: false},
+		// Grouping changes which logical op binds first: the || is evaluated
+		// before the && because of the parens.
+		{expr: "(1 > 2 || 1 < 2) && 3 < 2", expectedResult: false},
+		{expr: "(1 > 2 || 1 < 2) && 3 > 2", expectedResult: true},
+		// Nested grouping.
+		{expr: "((1 + 1) * 2) == 4", expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
+// TestUnmatchedOpenBracketError checks that an unbalanced open bracket is
+// reported as a syntax error rather than leaking a "(" into the RPN.
+func TestUnmatchedOpenBracketError(t *testing.T) {
+	_, err := Parse("(1 < 2")
+	if err == nil {
+		t.Fatalf("expected an error for an unmatched open bracket")
+	}
+}
