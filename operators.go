@@ -55,6 +55,10 @@ var operators = map[opToken]Operator{
 	"/":  arithmeticOp,
 	"%":  arithmeticOp,
 	"**": arithmeticOp,
+	"<":  comparisonOp,
+	">":  comparisonOp,
+	"<=": comparisonOp,
+	">=": comparisonOp,
 }
 
 // opRunes contains the list of runes used
@@ -181,6 +185,33 @@ func arithmeticOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, 
 		return floatToken(f1 - f2), nil
 	case "*":
 		return floatToken(f1 * f2), nil
+	}
+
+	return nil, unsupportedTypesErr(op, t1, t2)
+}
+
+// comparisonOp implements <, >, <= and >= for the numeral combinations
+// int/int, float/float, int/float and float/int, returning a boolToken.
+//
+// Following cparse (shunting-yard.cpp NumeralOperation), comparisons are
+// computed on the double value of both operands; non-numeral operands are
+// unsupported. String ordering is not implemented yet.
+func comparisonOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	f1, ok1 := asFloat(t1)
+	f2, ok2 := asFloat(t2)
+	if !ok1 || !ok2 {
+		return nil, unsupportedTypesErr(op, t1, t2)
+	}
+
+	switch op {
+	case "<":
+		return boolToken(f1 < f2), nil
+	case ">":
+		return boolToken(f1 > f2), nil
+	case "<=":
+		return boolToken(f1 <= f2), nil
+	case ">=":
+		return boolToken(f1 >= f2), nil
 	}
 
 	return nil, unsupportedTypesErr(op, t1, t2)

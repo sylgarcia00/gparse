@@ -230,3 +230,75 @@ func TestEqualityOps(t *testing.T) {
 		})
 	}
 }
+
+func TestComparisonOps(t *testing.T) {
+	tests := []struct {
+		name     string
+		op       opToken
+		left     Token
+		right    Token
+		expected boolToken
+	}{
+		{name: "int<int true", op: "<", left: intToken(1), right: intToken(2), expected: true},
+		{name: "int<int false", op: "<", left: intToken(2), right: intToken(2), expected: false},
+		{name: "int>int true", op: ">", left: intToken(3), right: intToken(2), expected: true},
+		{name: "int<=int equal", op: "<=", left: intToken(2), right: intToken(2), expected: true},
+		{name: "int>=int equal", op: ">=", left: intToken(2), right: intToken(2), expected: true},
+		{name: "float<float true", op: "<", left: floatToken(1.5), right: floatToken(2.5), expected: true},
+		{name: "int<float true", op: "<", left: intToken(2), right: floatToken(2.5), expected: true},
+		{name: "float>=int true", op: ">=", left: floatToken(2.0), right: intToken(2), expected: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			op := operators[test.op]
+			got, err := op(test.left, test.right, test.op, nil)
+			assertNoErr(t, err)
+
+			if got != test.expected {
+				t.Fatalf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+// TestComparisonNonNumeralError checks that comparing a non-numeral operand
+// returns a SyntaxErr rather than a bogus result.
+func TestComparisonNonNumeralError(t *testing.T) {
+	op := operators["<"]
+	_, err := op(intToken(1), boolToken(true), "<", nil)
+	assertErrContains(t, err, "unsupported types")
+}
+
+// TestComparisonThroughParse exercises <, >, <= and >= end-to-end via the
+// public Parse API, including operator precedence against arithmetic.
+func TestComparisonThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: "1 < 2", expectedResult: true},
+		{expr: "2 < 2", expectedResult: false},
+		{expr: "3 > 2", expectedResult: true},
+		{expr: "2 <= 2", expectedResult: true},
+		{expr: "2 >= 3", expectedResult: false},
+		{expr: "2.5 < 3", expectedResult: true},
+		// Arithmetic binds tighter than comparison: 2 + 3 < 6 -> 5 < 6.
+		{expr: "2 + 3 < 6", expectedResult: true},
+		{expr: "2 * 3 >= 6", expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
