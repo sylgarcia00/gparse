@@ -2,6 +2,7 @@ package gparse
 
 import (
 	"math"
+	"strconv"
 )
 
 // Operator represents all types of operators including
@@ -124,6 +125,13 @@ func equalsOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, erro
 		if _, ok := t2.(floatToken); ok {
 			return boolToken(t1 == t2), nil
 		}
+	case strToken:
+		// cparse compares a string only against another string; a string vs
+		// numeral comparison is an undefined operation, not simply false.
+		if _, ok := t2.(strToken); ok {
+			return boolToken(t1 == t2), nil
+		}
+		return nil, unsupportedTypesErr(op, t1, t2)
 	}
 
 	f1, ok1 := asFloat(t1)
@@ -159,6 +167,18 @@ func differsOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, err
 func arithmeticOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
 	if op == "%" {
 		return moduloOp(t1, t2, op)
+	}
+
+	// "+" concatenates when either operand is a string, matching cparse's
+	// string-on-string, string-on-number and number-on-string operations (a
+	// numeral operand is rendered through its double value: "x" + 5 -> "x5").
+	if op == "+" {
+		if _, ok := t1.(strToken); ok {
+			return concatOp(t1, t2, op)
+		}
+		if _, ok := t2.(strToken); ok {
+			return concatOp(t1, t2, op)
+		}
 	}
 
 	f1, ok1 := asFloat(t1)
@@ -247,6 +267,33 @@ func moduloOp(t1 Token, t2 Token, op opToken) (Token, error) {
 	}
 
 	return intToken(i1 % i2), nil
+}
+
+// concatOp implements "+" concatenation for a string operand paired with
+// another string or a numeral, returning a strToken. Any other operand type
+// (e.g. bool) is unsupported.
+func concatOp(t1 Token, t2 Token, op opToken) (Token, error) {
+	s1, ok1 := concatString(t1)
+	s2, ok2 := concatString(t2)
+	if !ok1 || !ok2 {
+		return nil, unsupportedTypesErr(op, t1, t2)
+	}
+
+	return strToken(s1 + s2), nil
+}
+
+// concatString returns the concatenation form of a token: the raw text of a
+// strToken (no surrounding quotes) or the double-value rendering of a numeral,
+// mirroring cparse which streams numbers through their double value. The
+// second return is false for any other type.
+func concatString(t Token) (string, bool) {
+	if s, ok := t.(strToken); ok {
+		return string(s), true
+	}
+	if f, ok := asFloat(t); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64), true
+	}
+	return "", false
 }
 
 // bitwiseOp implements the integer bitwise operators &, |, ^, << and >>.

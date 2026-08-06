@@ -181,10 +181,12 @@ func TestArithmeticOpErrors(t *testing.T) {
 			expectErrToContain: []string{"unsupported types for operator"},
 		},
 		{
-			name:               "add on string is unsupported",
+			// String + numeral now concatenates (see TestStringConcatOps);
+			// string + bool remains an unsupported combination.
+			name:               "add string and bool is unsupported",
 			op:                 "+",
 			left:               strToken("a"),
-			right:              intToken(1),
+			right:              boolToken(true),
 			expectErrToContain: []string{"unsupported types for operator"},
 		},
 	}
@@ -501,5 +503,109 @@ func TestUnmatchedOpenBracketError(t *testing.T) {
 	_, err := Parse("(1 < 2")
 	if err == nil {
 		t.Fatalf("expected an error for an unmatched open bracket")
+	}
+}
+
+// TestStringConcatOps exercises "+" concatenation for the string/string,
+// string/number and number/string combinations. A numeral operand is rendered
+// through its double value (matching cparse), so both int and float produce a
+// plain decimal with no trailing zeros.
+func TestStringConcatOps(t *testing.T) {
+	tests := []struct {
+		name     string
+		left     Token
+		right    Token
+		expected strToken
+	}{
+		{name: "str+str", left: strToken("foo"), right: strToken("bar"), expected: "foobar"},
+		{name: "str+int", left: strToken("x"), right: intToken(5), expected: "x5"},
+		{name: "int+str", left: intToken(5), right: strToken("x"), expected: "5x"},
+		{name: "str+float", left: strToken("v"), right: floatToken(2.5), expected: "v2.5"},
+		{name: "float+str", left: floatToken(2.5), right: strToken("v"), expected: "2.5v"},
+		// A float with an integral value drops the trailing zero: 3.0 -> "3".
+		{name: "str+float-integral", left: strToken("n"), right: floatToken(3), expected: "n3"},
+		{name: "str+str-empty", left: strToken(""), right: strToken("a"), expected: "a"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := arithmeticOp(test.left, test.right, "+", nil)
+			assertNoErr(t, err)
+
+			if got != test.expected {
+				t.Fatalf("expected %q, got %q", test.expected, got)
+			}
+		})
+	}
+}
+
+// TestStringEqualityOps checks that "==" and "!=" compare two strings and that
+// a string compared against a numeral is an unsupported operation (cparse only
+// defines string-on-string equality), not a silent false.
+func TestStringEqualityOps(t *testing.T) {
+	tests := []struct {
+		name     string
+		op       opToken
+		left     Token
+		right    Token
+		expected boolToken
+	}{
+		{name: "str==str true", op: "==", left: strToken("a"), right: strToken("a"), expected: true},
+		{name: "str==str false", op: "==", left: strToken("a"), right: strToken("b"), expected: false},
+		{name: "str!=str true", op: "!=", left: strToken("a"), right: strToken("b"), expected: true},
+		{name: "str!=str false", op: "!=", left: strToken("a"), right: strToken("a"), expected: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			op := operators[test.op]
+			got, err := op(test.left, test.right, test.op, nil)
+			assertNoErr(t, err)
+
+			if got != test.expected {
+				t.Fatalf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+// TestStringOpErrors checks the unsupported string-operand combinations:
+// concatenating a string with a bool, and comparing a string with a numeral.
+func TestStringOpErrors(t *testing.T) {
+	_, err := arithmeticOp(strToken("a"), boolToken(true), "+", nil)
+	assertErrContains(t, err, "unsupported types")
+
+	_, err = equalsOp(strToken("1"), intToken(1), "==", nil)
+	assertErrContains(t, err, "unsupported types")
+}
+
+// TestStringThroughParse exercises string concatenation and equality end-to-end
+// via the public Parse API. Results are wrapped in a string comparison because
+// the bool-only Evaluate entry point returns bool.
+func TestStringThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: `"foo" + "bar" == "foobar"`, expectedResult: true},
+		{expr: `"a" == "a"`, expectedResult: true},
+		{expr: `"a" != "b"`, expectedResult: true},
+		{expr: `"x" + 5 == "x5"`, expectedResult: true},
+		// Concatenation binds looser than nothing here, but chains left-to-right.
+		{expr: `"a" + "b" + "c" == "abc"`, expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
 	}
 }
