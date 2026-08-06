@@ -302,3 +302,81 @@ func TestComparisonThroughParse(t *testing.T) {
 		})
 	}
 }
+
+// TestLogicalOps exercises the &&, || and ! operators directly on boolToken
+// operands. The ! operator is left-unary, so its left operand is the
+// unaryPlaceholderToken the RPN builder emits.
+func TestLogicalOps(t *testing.T) {
+	tests := []struct {
+		name     string
+		op       opToken
+		left     Token
+		right    Token
+		expected boolToken
+	}{
+		{name: "true&&true", op: "&&", left: boolToken(true), right: boolToken(true), expected: true},
+		{name: "true&&false", op: "&&", left: boolToken(true), right: boolToken(false), expected: false},
+		{name: "false||true", op: "||", left: boolToken(false), right: boolToken(true), expected: true},
+		{name: "false||false", op: "||", left: boolToken(false), right: boolToken(false), expected: false},
+		{name: "!true", op: "!", left: unaryPlaceholderToken{}, right: boolToken(true), expected: false},
+		{name: "!false", op: "!", left: unaryPlaceholderToken{}, right: boolToken(false), expected: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			op := operators[test.op]
+			got, err := op(test.left, test.right, test.op, nil)
+			assertNoErr(t, err)
+
+			if got != test.expected {
+				t.Fatalf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+// TestLogicalNonBoolError checks that logical operators reject non-boolean
+// operands with a SyntaxErr instead of coercing them.
+func TestLogicalNonBoolError(t *testing.T) {
+	andOp := operators["&&"]
+	_, err := andOp(boolToken(true), intToken(1), "&&", nil)
+	assertErrContains(t, err, "unsupported types")
+
+	not := operators["!"]
+	_, err = not(unaryPlaceholderToken{}, intToken(0), "!", nil)
+	assertErrContains(t, err, "unsupported types")
+}
+
+// TestLogicalThroughParse exercises &&, || and ! end-to-end via the public
+// Parse API, including precedence against comparison (comparison binds
+// tighter than && which binds tighter than ||) and unary ! grouping.
+func TestLogicalThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: "1 < 2 && 3 > 2", expectedResult: true},
+		{expr: "1 < 2 && 3 < 2", expectedResult: false},
+		{expr: "1 > 2 || 3 > 2", expectedResult: true},
+		{expr: "1 > 2 || 3 < 2", expectedResult: false},
+		// NOTE: unary ! through Parse needs parenthesis grouping (e.g. !(1>2)),
+		// which is a separate pre-existing lexer/RPN gap — the next blocker after
+		// this. Direct ! coverage lives in TestLogicalOps.
+		// && binds tighter than ||: false || (true && true) -> true.
+		{expr: "1 > 2 || 1 < 2 && 3 > 2", expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}

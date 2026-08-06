@@ -59,6 +59,9 @@ var operators = map[opToken]Operator{
 	">":  comparisonOp,
 	"<=": comparisonOp,
 	">=": comparisonOp,
+	"&&": logicalOp,
+	"||": logicalOp,
+	"!":  notOp,
 }
 
 // opRunes contains the list of runes used
@@ -94,6 +97,13 @@ func asFloat(t Token) (float64, bool) {
 func asInt(t Token) (int, bool) {
 	v, ok := t.(intToken)
 	return int(v), ok
+}
+
+// asBool returns the boolean value of a boolToken. The second return is
+// false for any other type.
+func asBool(t Token) (bool, bool) {
+	v, ok := t.(boolToken)
+	return bool(v), ok
 }
 
 // equalsOp implements the "==" operator for the numeral combinations
@@ -232,6 +242,41 @@ func moduloOp(t1 Token, t2 Token, op opToken) (Token, error) {
 	}
 
 	return intToken(i1 % i2), nil
+}
+
+// logicalOp implements the binary logical operators "&&" and "||" for
+// boolToken operands, returning a boolToken. Non-boolean operands are
+// unsupported.
+//
+// Note: unlike C, evaluation is NOT short-circuiting — the RPN is evaluated
+// post-order, so both operands are already computed before this runs. For a
+// side-effect-free filter predicate (insights' use case) this is equivalent.
+func logicalOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	b1, ok1 := asBool(t1)
+	b2, ok2 := asBool(t2)
+	if !ok1 || !ok2 {
+		return nil, unsupportedTypesErr(op, t1, t2)
+	}
+
+	switch op {
+	case "&&":
+		return boolToken(b1 && b2), nil
+	case "||":
+		return boolToken(b1 || b2), nil
+	}
+
+	return nil, unsupportedTypesErr(op, t1, t2)
+}
+
+// notOp implements the left-unary logical negation operator "!". The left
+// operand is a unaryPlaceholderToken; the right operand must be a boolToken.
+func notOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	b, ok := asBool(t2)
+	if !ok {
+		return nil, unsupportedTypesErr(op, t1, t2)
+	}
+
+	return boolToken(!b), nil
 }
 
 func unsupportedTypesErr(op opToken, left Token, right Token) error {
