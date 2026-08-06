@@ -609,3 +609,90 @@ func TestStringThroughParse(t *testing.T) {
 		})
 	}
 }
+
+// TestIndexOps exercises the "[]" indexing operator directly for strings and
+// lists, including negative (from-the-end) indices.
+func TestIndexOps(t *testing.T) {
+	list := listToken{intToken(10), intToken(20), intToken(30)}
+
+	tests := []struct {
+		name     string
+		left     Token
+		right    Token
+		expected Token
+	}{
+		{name: `"hello"[0]`, left: strToken("hello"), right: intToken(0), expected: strToken("h")},
+		{name: `"hello"[1]`, left: strToken("hello"), right: intToken(1), expected: strToken("e")},
+		{name: `"hello"[-1]`, left: strToken("hello"), right: intToken(-1), expected: strToken("o")},
+		{name: `list[0]`, left: list, right: intToken(0), expected: intToken(10)},
+		{name: `list[2]`, left: list, right: intToken(2), expected: intToken(30)},
+		{name: `list[-1]`, left: list, right: intToken(-1), expected: intToken(30)},
+	}
+
+	index := operators["[]"]
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := index(test.left, test.right, "[]", nil)
+			assertNoErr(t, err)
+
+			if got != test.expected {
+				t.Fatalf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+// TestIndexOpErrors covers out-of-range indices, non-integer indices and
+// unindexable left operands.
+func TestIndexOpErrors(t *testing.T) {
+	list := listToken{intToken(10), intToken(20)}
+	index := operators["[]"]
+
+	_, err := index(strToken("ab"), intToken(2), "[]", nil)
+	assertErrContains(t, err, "index out of range")
+
+	_, err = index(strToken("ab"), intToken(-3), "[]", nil)
+	assertErrContains(t, err, "index out of range")
+
+	_, err = index(list, intToken(2), "[]", nil)
+	assertErrContains(t, err, "index out of range")
+
+	_, err = index(strToken("ab"), floatToken(1.0), "[]", nil)
+	assertErrContains(t, err, "unsupported types")
+
+	_, err = index(intToken(5), intToken(0), "[]", nil)
+	assertErrContains(t, err, "unsupported types")
+}
+
+// TestIndexThroughParse exercises "[]" indexing end-to-end via the public Parse
+// API, wrapped in a comparison because the bool-only Evaluate returns bool. It
+// also covers that "[]" binds tighter than "==" (indexing happens first).
+//
+// Only string literals with non-negative literal indices are reachable here:
+// list literals need the "," operator executed and negative literal indices
+// need unary-minus execution, neither of which exists yet (both are covered by
+// the direct TestIndexOps above, which builds the operands programmatically).
+func TestIndexThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: `"hello"[0] == "h"`, expectedResult: true},
+		{expr: `"hello"[1] == "e"`, expectedResult: true},
+		{expr: `"hello"[4] == "o"`, expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}

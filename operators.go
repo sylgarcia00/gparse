@@ -68,6 +68,7 @@ var operators = map[opToken]Operator{
 	"^":  bitwiseOp,
 	"<<": bitwiseOp,
 	">>": bitwiseOp,
+	"[]": indexOp,
 }
 
 // opRunes contains the list of runes used
@@ -361,6 +362,66 @@ func notOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) 
 	}
 
 	return boolToken(!b), nil
+}
+
+// indexOp implements the "[]" indexing operator for a string or list on the
+// left and an integer index on the right, mirroring cparse's
+// StringOnNumberOperation / ListOnNumberOperation:
+//   - str[i] returns the byte at index i as a single-character strToken
+//     (cparse indexes the underlying std::string by byte, so we match that;
+//     multi-byte runes are not decoded).
+//   - list[i] returns the element Token at index i.
+//
+// Negative indices count from the end (list[-1] == last element), matching
+// cparse. An out-of-range index returns a RuntimeErr; a non-integer index or an
+// unindexable left operand returns a SyntaxErr (unsupported types).
+//
+// map[key] indexing and the "." attribute operator are not implemented yet
+// (map indexing needs a None-token decision for missing keys, and "." needs
+// lexer support); those are the next steps for this file.
+func indexOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	idx, ok := asInt(t2)
+	if !ok {
+		return nil, unsupportedTypesErr(op, t1, t2)
+	}
+
+	switch container := t1.(type) {
+	case strToken:
+		i, err := resolveIndex(idx, len(container), op, t1, t2)
+		if err != nil {
+			return nil, err
+		}
+		return strToken(container[i]), nil
+	case listToken:
+		i, err := resolveIndex(idx, len(container), op, t1, t2)
+		if err != nil {
+			return nil, err
+		}
+		return container[i], nil
+	default:
+		return nil, unsupportedTypesErr(op, t1, t2)
+	}
+}
+
+// resolveIndex normalizes a possibly-negative index against a container of the
+// given length (idx == -1 maps to length-1, as in cparse/Python) and returns a
+// RuntimeErr when the resulting index falls outside [0, length).
+func resolveIndex(idx int, length int, op opToken, left Token, right Token) (int, error) {
+	if idx < 0 {
+		idx += length
+	}
+	if idx < 0 || idx >= length {
+		return 0, indexOutOfRangeErr(op, left, right)
+	}
+	return idx, nil
+}
+
+func indexOutOfRangeErr(op opToken, left Token, right Token) error {
+	return RuntimeErr("index out of range", map[string]any{
+		"op":         op,
+		"leftToken":  left,
+		"rightToken": right,
+	})
 }
 
 func unsupportedTypesErr(op opToken, left Token, right Token) error {
