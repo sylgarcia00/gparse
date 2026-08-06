@@ -62,6 +62,11 @@ var operators = map[opToken]Operator{
 	"&&": logicalOp,
 	"||": logicalOp,
 	"!":  notOp,
+	"&":  bitwiseOp,
+	"|":  bitwiseOp,
+	"^":  bitwiseOp,
+	"<<": bitwiseOp,
+	">>": bitwiseOp,
 }
 
 // opRunes contains the list of runes used
@@ -244,6 +249,38 @@ func moduloOp(t1 Token, t2 Token, op opToken) (Token, error) {
 	return intToken(i1 % i2), nil
 }
 
+// bitwiseOp implements the integer bitwise operators &, |, ^, << and >>.
+// Both operands must be intToken; a floatToken (or any non-int) operand is
+// unsupported, mirroring cparse which computes these on int64. A negative
+// shift count returns a SyntaxErr instead of panicking (Go panics on a
+// negative shift; C++ would be undefined behavior).
+func bitwiseOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	i1, ok1 := asInt(t1)
+	i2, ok2 := asInt(t2)
+	if !ok1 || !ok2 {
+		return nil, unsupportedTypesErr(op, t1, t2)
+	}
+
+	switch op {
+	case "&":
+		return intToken(i1 & i2), nil
+	case "|":
+		return intToken(i1 | i2), nil
+	case "^":
+		return intToken(i1 ^ i2), nil
+	case "<<", ">>":
+		if i2 < 0 {
+			return nil, negativeShiftErr(op, t1, t2)
+		}
+		if op == "<<" {
+			return intToken(i1 << uint(i2)), nil
+		}
+		return intToken(i1 >> uint(i2)), nil
+	}
+
+	return nil, unsupportedTypesErr(op, t1, t2)
+}
+
 // logicalOp implements the binary logical operators "&&" and "||" for
 // boolToken operands, returning a boolToken. Non-boolean operands are
 // unsupported.
@@ -281,6 +318,14 @@ func notOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) 
 
 func unsupportedTypesErr(op opToken, left Token, right Token) error {
 	return SyntaxErr("unsupported types for operator", map[string]any{
+		"op":         op,
+		"leftToken":  left,
+		"rightToken": right,
+	})
+}
+
+func negativeShiftErr(op opToken, left Token, right Token) error {
+	return SyntaxErr("negative shift count", map[string]any{
 		"op":         op,
 		"leftToken":  left,
 		"rightToken": right,

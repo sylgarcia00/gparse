@@ -303,6 +303,81 @@ func TestComparisonThroughParse(t *testing.T) {
 	}
 }
 
+// TestBitwiseOps exercises &, |, ^, << and >> directly on intToken operands.
+func TestBitwiseOps(t *testing.T) {
+	tests := []struct {
+		name     string
+		op       opToken
+		left     Token
+		right    Token
+		expected intToken
+	}{
+		{name: "5&3", op: "&", left: intToken(5), right: intToken(3), expected: 1},
+		{name: "5|2", op: "|", left: intToken(5), right: intToken(2), expected: 7},
+		{name: "5^1", op: "^", left: intToken(5), right: intToken(1), expected: 4},
+		{name: "1<<3", op: "<<", left: intToken(1), right: intToken(3), expected: 8},
+		{name: "16>>2", op: ">>", left: intToken(16), right: intToken(2), expected: 4},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			op := operators[test.op]
+			got, err := op(test.left, test.right, test.op, nil)
+			assertNoErr(t, err)
+
+			if got != test.expected {
+				t.Fatalf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+// TestBitwiseNonIntError checks that bitwise operators reject float (or other
+// non-int) operands, and that a negative shift count is rejected instead of
+// panicking.
+func TestBitwiseNonIntError(t *testing.T) {
+	and := operators["&"]
+	_, err := and(intToken(1), floatToken(2.0), "&", nil)
+	assertErrContains(t, err, "unsupported types")
+
+	shl := operators["<<"]
+	_, err = shl(intToken(1), intToken(-1), "<<", nil)
+	assertErrContains(t, err, "negative shift count")
+}
+
+// TestBitwiseThroughParse exercises the bitwise operators end-to-end via the
+// public Parse API. Results are wrapped in a comparison because the bool-only
+// Evaluate entry point returns bool; the grouping parens are also required
+// since &, | and ^ bind looser than == (the classic C precedence).
+func TestBitwiseThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: "(5 & 3) == 1", expectedResult: true},
+		{expr: "(5 | 2) == 7", expectedResult: true},
+		{expr: "(5 ^ 1) == 4", expectedResult: true},
+		{expr: "(1 << 3) == 8", expectedResult: true},
+		{expr: "(16 >> 2) == 4", expectedResult: true},
+		// << binds tighter than |: (1 << 2 | 1) -> (4 | 1) -> 5.
+		{expr: "(1 << 2 | 1) == 5", expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
 // TestLogicalOps exercises the &&, || and ! operators directly on boolToken
 // operands. The ! operator is left-unary, so its left operand is the
 // unaryPlaceholderToken the RPN builder emits.
