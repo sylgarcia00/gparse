@@ -69,6 +69,10 @@ var operators = map[opToken]Operator{
 	"<<": bitwiseOp,
 	">>": bitwiseOp,
 	"[]": indexOp,
+	// "." is attribute access; for maps it is identical to "[]" (m.foo ==
+	// m["foo"]), so it reuses indexOp. The lexer pushes the identifier after
+	// the "." as a strToken operand (see the '.' case in parse).
+	".": indexOp,
 }
 
 // opRunes contains the list of runes used
@@ -415,8 +419,11 @@ func notOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) 
 //     the key is absent, mirroring cparse's MapIndex (which returns
 //     packToken::None() for a missing key).
 //
-// The "." attribute operator is not implemented yet (it needs lexer support for
-// the '.' character); that is the next step for this file.
+// The "." attribute operator is also routed here (see the operators map): for a
+// map, m.foo is identical to m["foo"], so the lexer pushes the identifier after
+// the "." as a strToken and this same map path handles it. A "." applied to a
+// non-map left operand is an unsupported-types error (unlike "[]", a "." never
+// makes sense on a string or list index here).
 func indexOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
 	// Maps are keyed by string; sequences are indexed by integer.
 	if container, ok := t1.(mapToken); ok {
@@ -427,6 +434,12 @@ func indexOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error
 		value, found := container[key]
 		if !found {
 			return noneToken{}, nil
+		}
+		// Values read from JSON input are stored lazily; unwrap so downstream
+		// operators (and chained access like a.b.c) see the concrete token,
+		// matching varToken.Resolve which also unwraps lazyJsonToken.
+		if lazy, ok := value.(lazyJsonToken); ok {
+			value = lazy.Value()
 		}
 		return value, nil
 	}

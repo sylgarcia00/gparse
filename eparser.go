@@ -187,6 +187,25 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 				rpnBuilder.handleOp("()")
 				rpnBuilder.openBracket("{")
 				i++
+			case '.':
+				// Attribute access: `m.foo` is identical to `m["foo"]` for a
+				// map (see the "." entry in the operators map, routed to
+				// indexOp). We emit the "." operator and then the following
+				// identifier as a string literal operand, so the map-index path
+				// handles it. A "." here (in the default operator branch) can
+				// never be part of a float literal: parseNumber owns any "."
+				// inside a number and only fires when the token starts with a
+				// digit, so a bare `.5` is not lexed as a number.
+				rpnBuilder.handleOp(".")
+				i++
+				if i >= len(expr) || !isVarChar(expr[i]) {
+					return nil, SyntaxErr("expected an attribute name after '.'", map[string]any{
+						"pos": parsingCtx.FormatLineCol(i),
+					})
+				}
+				var attrName string
+				i, attrName = parseVar(expr, i)
+				rpnBuilder.handleToken(strToken(attrName))
 			case ')':
 				rpnBuilder.closeBracket("(")
 				i++

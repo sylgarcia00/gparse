@@ -795,3 +795,86 @@ func TestUnaryArithmeticThroughParse(t *testing.T) {
 		})
 	}
 }
+
+// TestDotOps exercises the "." attribute operator directly. For a map it is
+// identical to "[]": a present key returns its value and a missing key returns a
+// noneToken (the lexer feeds the attribute name as a strToken, so at this level
+// it is the same call as index(m, strToken(...))).
+func TestDotOps(t *testing.T) {
+	m := mapToken{"a": intToken(10), "b": strToken("x")}
+	dot := operators["."]
+
+	got, err := dot(m, strToken("a"), ".", nil)
+	assertNoErr(t, err)
+	if got != intToken(10) {
+		t.Fatalf(`expected m.a == 10, got %v`, got)
+	}
+
+	got, err = dot(m, strToken("missing"), ".", nil)
+	assertNoErr(t, err)
+	if _, ok := got.(noneToken); !ok {
+		t.Fatalf("expected noneToken for a missing attribute, got %T (%v)", got, got)
+	}
+
+	_, err = dot(intToken(5), strToken("a"), ".", nil)
+	assertErrContains(t, err, "unsupported types")
+}
+
+// TestDotThroughParse exercises "." attribute access end-to-end via the public
+// Parse API against a JSON payload, wrapped in a comparison because the bool-only
+// Evaluate returns bool. It covers a present key, a nested/chained access and a
+// missing key (which resolves to None and thus compares unequal), plus that "."
+// binds tighter than "==".
+func TestDotThroughParse(t *testing.T) {
+	payload := json.RawMessage(`{"user":{"name":"bob","age":30,"addr":{"city":"nyc"}}}`)
+
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: `user.name == "bob"`, expectedResult: true},
+		{expr: `user.name == "alice"`, expectedResult: false},
+		{expr: `user.age == 30`, expectedResult: true},
+		{expr: `user.addr.city == "nyc"`, expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(payload)
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
+// TestDotThroughParseErrors covers "." applied to a non-map value (a runtime
+// unsupported-types error) and a dangling "." with no attribute name after it (a
+// parse-time syntax error).
+func TestDotThroughParseErrors(t *testing.T) {
+	// "." on a non-map operand: user.name is a string, so .foo on it fails.
+	expr, err := Parse(`user.name.foo == "x"`)
+	assertNoErr(t, err)
+	_, err = expr.Evaluate(json.RawMessage(`{"user":{"name":"bob"}}`))
+	assertErrContains(t, err, "unsupported types")
+
+	// A dangling "." with no attribute name is a syntax error at parse time.
+	_, err = Parse(`user. == 1`)
+	assertErrContains(t, err, "expected an attribute name")
+
+	_, err = Parse(`user.`)
+	assertErrContains(t, err, "expected an attribute name")
+
+	// A missing attribute resolves to None (verified directly in TestDotOps);
+	// comparing None with "==" is not a supported operation yet, so end-to-end
+	// it surfaces as an unsupported-types error rather than false.
+	expr, err = Parse(`user.missing == "x"`)
+	assertNoErr(t, err)
+	_, err = expr.Evaluate(json.RawMessage(`{"user":{"name":"bob"}}`))
+	assertErrContains(t, err, "unsupported types")
+}
