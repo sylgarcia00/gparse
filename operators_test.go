@@ -725,3 +725,73 @@ func TestIndexThroughParse(t *testing.T) {
 		})
 	}
 }
+
+// TestUnaryArithmeticOps exercises the left-unary "-" and "+" operators
+// directly: the left operand is a unaryPlaceholderToken, mirroring how the RPN
+// builder feeds a normalized "-"/"+" symbol for a left-unary use.
+func TestUnaryArithmeticOps(t *testing.T) {
+	tests := []struct {
+		name     string
+		op       opToken
+		operand  Token
+		expected Token
+	}{
+		{name: "-int", op: "-", operand: intToken(5), expected: intToken(-5)},
+		{name: "-negative int", op: "-", operand: intToken(-3), expected: intToken(3)},
+		{name: "-float", op: "-", operand: floatToken(2.5), expected: floatToken(-2.5)},
+		{name: "+int identity", op: "+", operand: intToken(7), expected: intToken(7)},
+		{name: "+float identity", op: "+", operand: floatToken(1.5), expected: floatToken(1.5)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			op := operators[test.op]
+			got, err := op(unaryPlaceholderToken{}, test.operand, test.op, nil)
+			assertNoErr(t, err)
+
+			if got != test.expected {
+				t.Fatalf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
+// TestUnaryArithmeticNonNumeralError checks that a left-unary "-"/"+" on a
+// non-numeral operand returns a SyntaxErr rather than a bogus result.
+func TestUnaryArithmeticNonNumeralError(t *testing.T) {
+	op := operators["-"]
+	_, err := op(unaryPlaceholderToken{}, boolToken(true), "-", nil)
+	assertErrContains(t, err, "unsupported types")
+}
+
+// TestUnaryArithmeticThroughParse exercises unary minus/plus end-to-end via the
+// public Parse API, including its precedence against binary arithmetic and its
+// use inside grouped sub-expressions.
+func TestUnaryArithmeticThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: "-5 == 0 - 5", expectedResult: true},
+		{expr: "-2 < 0", expectedResult: true},
+		// Unary minus binds tighter than binary "+": -2 + 3 -> 1.
+		{expr: "-2 + 3 == 1", expectedResult: true},
+		{expr: "+7 == 7", expectedResult: true},
+		{expr: "3 * -2 == -6", expectedResult: true},
+		{expr: "-(1 + 2) == -3", expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}

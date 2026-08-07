@@ -172,7 +172,15 @@ func differsOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, err
 //     are intToken and promote to floatToken when either is a floatToken.
 //
 // Division and modulo by zero return a SyntaxErr instead of panicking.
+//
+// A unaryPlaceholderToken as the left operand marks a left-unary use of "+" or
+// "-" (e.g. -5, +x): the RPN builder normalizes "L-"/"L+" to the same "-"/"+"
+// symbol as their binary form, so unary negation/identity is handled here.
 func arithmeticOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	if _, ok := t1.(unaryPlaceholderToken); ok {
+		return unaryArithmeticOp(t2, op)
+	}
+
 	if op == "%" {
 		return moduloOp(t1, t2, op)
 	}
@@ -258,6 +266,26 @@ func comparisonOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, 
 	}
 
 	return nil, unsupportedTypesErr(op, t1, t2)
+}
+
+// unaryArithmeticOp implements the left-unary "-" and "+" operators for a
+// numeral operand, preserving intToken/floatToken. Unary minus negates the
+// value; unary plus is the identity. A non-numeral operand is unsupported.
+func unaryArithmeticOp(t Token, op opToken) (Token, error) {
+	switch v := t.(type) {
+	case intToken:
+		if op == "-" {
+			return -v, nil
+		}
+		return v, nil
+	case floatToken:
+		if op == "-" {
+			return -v, nil
+		}
+		return v, nil
+	default:
+		return nil, unsupportedTypesErr(op, unaryPlaceholderToken{}, t)
+	}
 }
 
 // moduloOp implements the integer modulo operator "%". Both operands
