@@ -83,6 +83,18 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 		case isVarChar(expr[i]):
 			var varName string
 			i, varName = parseVar(expr, i)
+
+			if builtin, isBuiltin := builtinFunctions[varName]; isBuiltin {
+				// A registered built-in name (e.g. len, type) becomes a Function
+				// token so a following "(" is dispatched as a call. This lookup
+				// runs first, so built-ins take precedence over reserved words
+				// and over a payload variable of the same name (a field named
+				// "len" can only be a call, never read as a value).
+				rpnBuilder.handleToken(builtin)
+				i = consumeSpaces(expr, i, &parsingCtx)
+				continue
+			}
+
 			rpnBuilder.handleToken(varToken([]string{varName}))
 
 			parser := reservedWordParsers[varName]
@@ -537,10 +549,8 @@ func parseNumber(expr []rune, index int) (newIndex int, token Token, err error) 
 
 func execFunc(this mapToken, fn Function, args tupleToken, vars mapToken) (Token, error) {
 	vars = vars.getChildMap()
-	fn(args, mapToken{
+	return fn(args, mapToken{
 		"$parent": vars,
 		"this":    this,
 	})
-
-	return nil, nil
 }
