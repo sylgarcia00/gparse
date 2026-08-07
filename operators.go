@@ -74,6 +74,7 @@ var operators = map[opToken]Operator{
 	// the "." as a strToken operand (see the '.' case in parse).
 	".": indexOp,
 	",": commaOp,
+	":": colonOp,
 }
 
 // opRunes contains the list of runes used
@@ -417,6 +418,30 @@ func commaOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error
 		return append(tuple, t2), nil
 	}
 	return tupleToken{t1, t2}, nil
+}
+
+// colonOp implements the ":" operator, which pairs a key with a value to form
+// a KeyValuePair for a map literal, mirroring cparse's Colon
+// (builtin-features/operations.inc), the structural analog of Comma.
+//
+// A map literal `{"a": 1, "b": 2}` is lexed as a call to the map constructor
+// (NewMapToken) whose argument list is a comma-separated series of colon pairs:
+// the "," executor (commaOp) folds the pairs into a single tupleToken and the
+// "()" call path spreads that tuple into one KeyValuePair per element (see
+// NewMapToken, which rejects any argument that is not a KeyValuePair).
+//
+// The left operand is the key and must be a strToken, since map keys are
+// strings (NewMapToken indexes by string); a non-string key is an
+// unsupported-types error. Unlike cparse's chained STuple, each ":" produces
+// exactly one KeyValuePair — chaining is not needed because a KeyValuePair
+// already holds a single key and value, and ":" binds tighter than "," so
+// `"a": 1, "b": 2` groups as `("a": 1), ("b": 2)`.
+func colonOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	key, ok := asStr(t1)
+	if !ok {
+		return nil, unsupportedTypesErr(op, t1, t2)
+	}
+	return KeyValuePair{Key: key, Value: t2}, nil
 }
 
 // indexOp implements the "[]" indexing operator for a string or list on the

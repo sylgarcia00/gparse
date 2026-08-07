@@ -975,3 +975,94 @@ func TestCommaMalformedTuple(t *testing.T) {
 	_, err = Parse("[1,,2]")
 	assertErrContains(t, err, "unrecognized operator")
 }
+
+// TestColonOp exercises the ":" executor directly: it pairs a string key with
+// any value into a KeyValuePair, the token the map constructor (NewMapToken)
+// consumes. A non-string key is an unsupported-types error, since map keys are
+// strings.
+func TestColonOp(t *testing.T) {
+	colon := operators[":"]
+
+	got, err := colon(strToken("a"), intToken(1), ":", nil)
+	assertNoErr(t, err)
+	if got != (KeyValuePair{Key: "a", Value: intToken(1)}) {
+		t.Fatalf("expected KeyValuePair{a:1}, got %v", got)
+	}
+
+	// The value may be any token type.
+	got, err = colon(strToken("flag"), boolToken(true), ":", nil)
+	assertNoErr(t, err)
+	if got != (KeyValuePair{Key: "flag", Value: boolToken(true)}) {
+		t.Fatalf("expected KeyValuePair{flag:true}, got %v", got)
+	}
+
+	// A non-string key (numeral, bool, ...) is rejected.
+	_, err = colon(intToken(1), intToken(2), ":", nil)
+	assertErrContains(t, err, "unsupported types")
+}
+
+// TestColonThroughParse proves the colon executor end-to-end through map
+// literals. A map literal is a call to the map constructor whose argument list
+// is a comma-separated series of colon pairs, so this exercises the colon +
+// comma + "()" spread interaction. Because the public API only exposes a bool
+// result, each map is probed by indexing it.
+func TestColonThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		// Single-pair map literal.
+		{expr: `{"a": 1}["a"] == 1`, expectedResult: true},
+
+		// Multi-pair map literal: the "," folds the colon pairs into the
+		// argument tuple the map constructor spreads.
+		{expr: `{"a": 1, "b": 2}["a"] == 1`, expectedResult: true},
+		{expr: `{"a": 1, "b": 2}["b"] == 2`, expectedResult: true},
+
+		// Heterogeneous values.
+		{expr: `{"name": "bob", "age": 30}["name"] == "bob"`, expectedResult: true},
+		{expr: `{"ok": true}["ok"] == true`, expectedResult: true},
+
+		// Colon binds tighter than comma and the value sub-expression is fully
+		// evaluated before it becomes a pair value.
+		{expr: `{"sum": 1 + 1}["sum"] == 2`, expectedResult: true},
+
+		// A later pair's value is reachable regardless of ordering.
+		{expr: `{"x": 10, "y": 20, "z": 30}["z"] == 30`, expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			got, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if got != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, got)
+			}
+		})
+	}
+}
+
+// TestMapLiteralErrors covers malformed map literals. A non-string key is
+// rejected by the colon executor; a duplicate key is rejected by the map
+// constructor; a bare value with no colon is not a KeyValuePair and the map
+// constructor rejects it.
+func TestMapLiteralErrors(t *testing.T) {
+	expr, err := Parse(`{1: 2}["1"] == 2`)
+	assertNoErr(t, err)
+	_, err = expr.Evaluate(json.RawMessage("{}"))
+	assertErrContains(t, err, "unsupported types")
+
+	expr, err = Parse(`{"a": 1, "a": 2}["a"] == 2`)
+	assertNoErr(t, err)
+	_, err = expr.Evaluate(json.RawMessage("{}"))
+	assertErrContains(t, err, "duplicate key")
+
+	expr, err = Parse(`{"a"}["a"] == 1`)
+	assertNoErr(t, err)
+	_, err = expr.Evaluate(json.RawMessage("{}"))
+	assertErrContains(t, err, "map constructor expects")
+}
