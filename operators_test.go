@@ -664,6 +664,35 @@ func TestIndexOpErrors(t *testing.T) {
 	assertErrContains(t, err, "unsupported types")
 }
 
+// TestMapIndexOps exercises "[]" indexing on a mapToken: a present string key
+// returns its value, a missing key returns a noneToken (mirroring cparse's
+// MapIndex returning packToken::None()), and a non-string key is unsupported.
+func TestMapIndexOps(t *testing.T) {
+	m := mapToken{"a": intToken(10), "b": strToken("x")}
+	index := operators["[]"]
+
+	got, err := index(m, strToken("a"), "[]", nil)
+	assertNoErr(t, err)
+	if got != intToken(10) {
+		t.Fatalf(`expected m["a"] == 10, got %v`, got)
+	}
+
+	got, err = index(m, strToken("b"), "[]", nil)
+	assertNoErr(t, err)
+	if got != strToken("x") {
+		t.Fatalf(`expected m["b"] == "x", got %v`, got)
+	}
+
+	got, err = index(m, strToken("missing"), "[]", nil)
+	assertNoErr(t, err)
+	if _, ok := got.(noneToken); !ok {
+		t.Fatalf("expected noneToken for a missing key, got %T (%v)", got, got)
+	}
+
+	_, err = index(m, intToken(0), "[]", nil)
+	assertErrContains(t, err, "unsupported types")
+}
+
 // TestIndexThroughParse exercises "[]" indexing end-to-end via the public Parse
 // API, wrapped in a comparison because the bool-only Evaluate returns bool. It
 // also covers that "[]" binds tighter than "==" (indexing happens first).

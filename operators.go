@@ -113,6 +113,13 @@ func asBool(t Token) (bool, bool) {
 	return bool(v), ok
 }
 
+// asStr returns the string value of a strToken. The second return is false for
+// any other type.
+func asStr(t Token) (string, bool) {
+	v, ok := t.(strToken)
+	return string(v), ok
+}
+
 // equalsOp implements the "==" operator for the numeral combinations
 // int/int, float/float, int/float and float/int, returning a boolToken.
 func equalsOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
@@ -376,10 +383,26 @@ func notOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) 
 // cparse. An out-of-range index returns a RuntimeErr; a non-integer index or an
 // unindexable left operand returns a SyntaxErr (unsupported types).
 //
-// map[key] indexing and the "." attribute operator are not implemented yet
-// (map indexing needs a None-token decision for missing keys, and "." needs
-// lexer support); those are the next steps for this file.
+//   - map[key] returns the value Token for a string key, or a noneToken when
+//     the key is absent, mirroring cparse's MapIndex (which returns
+//     packToken::None() for a missing key).
+//
+// The "." attribute operator is not implemented yet (it needs lexer support for
+// the '.' character); that is the next step for this file.
 func indexOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	// Maps are keyed by string; sequences are indexed by integer.
+	if container, ok := t1.(mapToken); ok {
+		key, ok := asStr(t2)
+		if !ok {
+			return nil, unsupportedTypesErr(op, t1, t2)
+		}
+		value, found := container[key]
+		if !found {
+			return noneToken{}, nil
+		}
+		return value, nil
+	}
+
 	idx, ok := asInt(t2)
 	if !ok {
 		return nil, unsupportedTypesErr(op, t1, t2)

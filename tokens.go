@@ -85,6 +85,19 @@ func (f floatToken) String() string {
 	return strconv.FormatFloat(float64(f), 'f', -1, 64)
 }
 
+// noneToken represents the absence of a value, mirroring cparse's NONE type.
+// It is produced by map indexing on a missing key (see indexOp) and matches
+// cparse's packToken::None(). There is no literal syntax for it yet.
+type noneToken struct{}
+
+func (n noneToken) Clone() Token {
+	return n
+}
+
+func (noneToken) String() string {
+	return "None"
+}
+
 // boolToken represent boolean values
 type boolToken bool
 
