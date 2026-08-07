@@ -2,7 +2,6 @@ package gparse
 
 import (
 	"strings"
-
 )
 
 // listToken represents a list data type
@@ -92,6 +91,12 @@ func (k KeyValuePair) String() string {
 // tupleToken represents tuples like in Python: (1, "foo", false)
 type tupleToken []Token
 
+// Clone is intentionally shallow (returns the same slice) because a tupleToken
+// is never stored as an RPN literal: it is only ever built at evaluation time
+// by commaOp (which appends to it in place) and immediately consumed by a call
+// or list/map constructor within the same evaluation. copyRPN therefore never
+// needs to deep-copy one. If tuples ever become RPN literals, commaOp's in-place
+// append would alias shared state and this must become a deep copy.
 func (t tupleToken) Clone() Token {
 	return t
 }

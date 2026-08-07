@@ -878,3 +878,100 @@ func TestDotThroughParseErrors(t *testing.T) {
 	_, err = expr.Evaluate(json.RawMessage(`{"user":{"name":"bob"}}`))
 	assertErrContains(t, err, "unsupported types")
 }
+
+// TestCommaOp exercises the "," executor directly: a non-tuple left operand
+// starts a new two-element tuple, while a tupleToken left operand is extended
+// in place. Left-folding a comma chain (comma is left-associative) therefore
+// yields a single flat tuple.
+func TestCommaOp(t *testing.T) {
+	comma := operators[","]
+
+	// Fresh pair from two scalars.
+	got, err := comma(intToken(1), intToken(2), ",", nil)
+	assertNoErr(t, err)
+	assertTupleEquals(t, got, tupleToken{intToken(1), intToken(2)})
+
+	// Extending an existing tuple appends one element (mirrors the left-fold
+	// the RPN produces for `1, 2, 3`).
+	got, err = comma(got, intToken(3), ",", nil)
+	assertNoErr(t, err)
+	assertTupleEquals(t, got, tupleToken{intToken(1), intToken(2), intToken(3)})
+
+	// Tuples are heterogeneous, like Python tuples.
+	got, err = comma(strToken("a"), boolToken(true), ",", nil)
+	assertNoErr(t, err)
+	assertTupleEquals(t, got, tupleToken{strToken("a"), boolToken(true)})
+}
+
+func assertTupleEquals(t *testing.T, got Token, want tupleToken) {
+	t.Helper()
+	tuple, ok := got.(tupleToken)
+	if !ok {
+		t.Fatalf("expected a tupleToken, got %T (%v)", got, got)
+	}
+	if len(tuple) != len(want) {
+		t.Fatalf("expected tuple %v, got %v", want, tuple)
+	}
+	for i := range want {
+		if tuple[i] != want[i] {
+			t.Fatalf("expected tuple %v, got %v", want, tuple)
+		}
+	}
+}
+
+// TestCommaThroughParse proves the comma executor end-to-end: multi-element
+// list/tuple building and multi-argument built-in calls (the path the comma
+// executor unblocks). It also pins comma precedence: comma binds looser than
+// every other operator, so `min(1+1, 3)` groups as `min((1+1), 3)`.
+func TestCommaThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		// Multi-element list literal: the "," builds the argument tuple that the
+		// list constructor spreads into elements.
+		{expr: "len([1, 2, 3]) == 3", expectedResult: true},
+		{expr: "[10, 20, 30][1] == 20", expectedResult: true},
+
+		// Multi-argument built-in call reaching min/max.
+		{expr: "min(3, 1, 2) == 1", expectedResult: true},
+		{expr: "max(3, 1, 2) == 3", expectedResult: true},
+
+		// Comma binds looser than the inner operators, so sub-expressions are
+		// fully evaluated before becoming tuple elements.
+		{expr: "min(1 + 1, 3) == 2", expectedResult: true},
+		{expr: "max(2 * 2, 3) == 4", expectedResult: true},
+
+		// A nested list literal is a single element of the outer list.
+		{expr: "len([[1, 2], [3, 4], [5, 6]]) == 3", expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			got, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if got != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, got)
+			}
+		})
+	}
+}
+
+// TestCommaMalformedTuple covers malformed tuple syntax. A trailing comma
+// leaves a dangling "," operator with no right-hand operand, which surfaces as
+// a missing-operands error at evaluation time; a doubled comma is rejected at
+// parse time as an unrecognized operator. Either way a malformed tuple never
+// silently builds a short/wrong tuple.
+func TestCommaMalformedTuple(t *testing.T) {
+	expr, err := Parse("[1, 2,]")
+	assertNoErr(t, err)
+	_, err = expr.Evaluate(json.RawMessage("{}"))
+	assertErrContains(t, err, "missing operands")
+
+	_, err = Parse("[1,,2]")
+	assertErrContains(t, err, "unrecognized operator")
+}

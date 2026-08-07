@@ -73,6 +73,7 @@ var operators = map[opToken]Operator{
 	// m["foo"]), so it reuses indexOp. The lexer pushes the identifier after
 	// the "." as a strToken operand (see the '.' case in parse).
 	".": indexOp,
+	",": commaOp,
 }
 
 // opRunes contains the list of runes used
@@ -401,6 +402,21 @@ func notOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) 
 	}
 
 	return boolToken(!b), nil
+}
+
+// commaOp implements the "," operator, which builds a tuple from its operands,
+// mirroring cparse's Comma (builtin-features/operations.inc): when the left
+// operand is already a tupleToken it is extended in place with the right
+// operand; otherwise a new two-element tuple is created. Left-folding a chain
+// of commas (comma is left-associative) therefore yields a single flat tuple,
+// e.g. `1, 2, 3` -> tupleToken{1, 2, 3}. This is what makes multi-argument
+// function calls reachable: the "()" call path in evaluate() spreads a
+// tupleToken argument into one arg per element (see execFunc / singleArg).
+func commaOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	if tuple, ok := t1.(tupleToken); ok {
+		return append(tuple, t2), nil
+	}
+	return tupleToken{t1, t2}, nil
 }
 
 // indexOp implements the "[]" indexing operator for a string or list on the

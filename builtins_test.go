@@ -146,3 +146,49 @@ func TestBuiltinLenNonSizableThroughParse(t *testing.T) {
 	_, err = expr.Evaluate(json.RawMessage("{}"))
 	assertErrContains(t, err, "not sizable")
 }
+
+// TestBuiltinMinMax exercises min/max directly on programmatically built
+// argument slices (the multi-argument shape the "," executor produces),
+// including int/float mixing and the single-argument edge case.
+func TestBuiltinMinMax(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func([]Token, mapToken) (Token, error)
+		args []Token
+		want Token
+	}{
+		{name: "min ints", fn: builtinMin, args: []Token{intToken(3), intToken(1), intToken(2)}, want: intToken(1)},
+		{name: "max ints", fn: builtinMax, args: []Token{intToken(3), intToken(1), intToken(2)}, want: intToken(3)},
+		{name: "min single arg", fn: builtinMin, args: []Token{intToken(7)}, want: intToken(7)},
+		{name: "max single arg", fn: builtinMax, args: []Token{floatToken(2.5)}, want: floatToken(2.5)},
+
+		// Mixed operands compare on the numeral value but return the original
+		// token, so the winning type is preserved.
+		{name: "min keeps float", fn: builtinMin, args: []Token{intToken(2), floatToken(1.5)}, want: floatToken(1.5)},
+		{name: "min keeps int", fn: builtinMin, args: []Token{intToken(1), floatToken(2.5)}, want: intToken(1)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := test.fn(test.args, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v (%T), got %v (%T)", test.want, test.want, got, got)
+			}
+		})
+	}
+}
+
+// TestBuiltinMinMaxErrors covers an empty call and a non-numeral argument, both
+// of which must return an error rather than panic.
+func TestBuiltinMinMaxErrors(t *testing.T) {
+	_, err := builtinMin([]Token{}, nil)
+	assertErrContains(t, err, "at least one argument")
+
+	_, err = builtinMax([]Token{}, nil)
+	assertErrContains(t, err, "at least one argument")
+
+	_, err = builtinMin([]Token{intToken(1), strToken("x")}, nil)
+	assertErrContains(t, err, "not a number")
+}
