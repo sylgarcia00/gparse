@@ -944,6 +944,14 @@ func TestCommaThroughParse(t *testing.T) {
 
 		// A nested list literal is a single element of the outer list.
 		{expr: "len([[1, 2], [3, 4], [5, 6]]) == 3", expectedResult: true},
+
+		// An empty list literal constructs a zero-length list.
+		{expr: "len([]) == 0", expectedResult: true},
+		{expr: "type([]) == \"list\"", expectedResult: true},
+		// Whitespace between the brackets is still empty.
+		{expr: "len([ ]) == 0", expectedResult: true},
+		// An empty list is a valid element of an outer list.
+		{expr: "len([[]]) == 1", expectedResult: true},
 	}
 
 	for _, test := range tests {
@@ -1029,6 +1037,12 @@ func TestColonThroughParse(t *testing.T) {
 
 		// A later pair's value is reachable regardless of ordering.
 		{expr: `{"x": 10, "y": 20, "z": 30}["z"] == 30`, expectedResult: true},
+
+		// An empty map literal constructs a zero-length map.
+		{expr: `len({}) == 0`, expectedResult: true},
+		{expr: `type({}) == "map"`, expectedResult: true},
+		// Whitespace between the braces is still empty.
+		{expr: `len({ }) == 0`, expectedResult: true},
 	}
 
 	for _, test := range tests {

@@ -1,8 +1,5 @@
 package gparse
 
-import (
-)
-
 // RPNBuilder ties together the logic necessary to correctly
 // build an RPN given input tokens and operators.
 //
@@ -165,6 +162,20 @@ func (r *RPNBuilder) handleToken(token Token) error {
 	r.lastTokenWasUnary = false
 
 	return nil
+}
+
+// handleEmptyConstructor emits a zero-argument constructor call for an empty
+// collection literal (`[]` or `{}`). The constructor Function token has already
+// been pushed by the caller; here we add an empty tupleToken operand and the
+// "()" call op, mirroring the non-empty path (`[fn, args, ()]`) instead of
+// opening a bracket that would immediately close with no operand and leak a raw
+// "[" / "{" op into the RPN.
+func (r *RPNBuilder) handleEmptyConstructor() error {
+	// The constructor Function is already on the RPN, so lastTokenWasOp is "no".
+	// Append the empty-tuple operand directly (handleToken would reject it in the
+	// "no" state) and let handleOp emit the binary "()" call op after it.
+	r.rpn = append(r.rpn, tupleToken{})
+	return r.handleOp("()")
 }
 
 func (r *RPNBuilder) openBracket(bracket string) {

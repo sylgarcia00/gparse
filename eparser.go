@@ -185,6 +185,18 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 					// Add the list constructor to the rpn:
 					rpnBuilder.handleToken(Function(NewListToken))
 
+					// An empty literal `[]` constructs an empty list: emit the
+					// zero-argument call instead of opening a bracket that would
+					// close with no operand.
+					if isEmptyBracket(expr, i, ']') {
+						i = consumeSpaces(expr, i+1, &parsingCtx) + 1
+						err = rpnBuilder.handleEmptyConstructor()
+						if err != nil {
+							return nil, err
+						}
+						break
+					}
+
 					// We make the program see it as a normal function call:
 					rpnBuilder.handleOp("()")
 				}
@@ -194,6 +206,18 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 			case '{':
 				// Add a map constructor call to the rpn:
 				rpnBuilder.handleToken(Function(NewMapToken))
+
+				// An empty literal `{}` constructs an empty map: emit the
+				// zero-argument call instead of opening a bracket that would
+				// close with no operand.
+				if isEmptyBracket(expr, i, '}') {
+					i = consumeSpaces(expr, i+1, &parsingCtx) + 1
+					err = rpnBuilder.handleEmptyConstructor()
+					if err != nil {
+						return nil, err
+					}
+					break
+				}
 
 				// We make the program see it as a normal function call:
 				rpnBuilder.handleOp("()")
@@ -438,6 +462,18 @@ func consumeSpaces(expr []rune, index int, parsingCtx *ParsingCtx) (newIndex int
 	}
 
 	return index
+}
+
+// isEmptyBracket reports whether the open bracket at openIdx is immediately
+// followed (ignoring spaces) by its matching close rune, i.e. an empty `[]` or
+// `{}` literal. It does not advance parsingCtx; the caller re-consumes the
+// spaces via consumeSpaces so newline bookkeeping happens exactly once.
+func isEmptyBracket(expr []rune, openIdx int, closeRune rune) bool {
+	i := openIdx + 1
+	for i < len(expr) && unicode.IsSpace(expr[i]) {
+		i++
+	}
+	return i < len(expr) && expr[i] == closeRune
 }
 
 // isVarChar checks if a character is the first character of a variable:
