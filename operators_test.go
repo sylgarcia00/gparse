@@ -1080,3 +1080,33 @@ func TestMapLiteralErrors(t *testing.T) {
 	_, err = expr.Evaluate(json.RawMessage("{}"))
 	assertErrContains(t, err, "map constructor expects")
 }
+
+// TestEmptyCallThroughParse proves the no-argument call path `foo()` parses,
+// sharing the empty-bracket fix with `[]`/`{}` (previously the empty parens
+// closed with no operand and failed at parse). No zero-argument built-in exists
+// yet, so the observable proof is that parsing succeeds and the call reaches the
+// built-in's own arity check at evaluation time instead of a bracket parse error.
+func TestEmptyCallThroughParse(t *testing.T) {
+	// len()/type() require exactly one argument; min()/max() at least one.
+	tests := []struct {
+		expr            string
+		expectErrSubstr string
+	}{
+		{expr: "len()", expectErrSubstr: "exactly one argument"},
+		{expr: "type()", expectErrSubstr: "exactly one argument"},
+		{expr: "min()", expectErrSubstr: "at least one argument"},
+		{expr: "max()", expectErrSubstr: "at least one argument"},
+		// Whitespace between the parens is still an empty call.
+		{expr: "len( )", expectErrSubstr: "exactly one argument"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			_, err = expr.Evaluate(json.RawMessage("{}"))
+			assertErrContains(t, err, test.expectErrSubstr)
+		})
+	}
+}

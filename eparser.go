@@ -170,6 +170,17 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 			case '(':
 				// If it is a function call:
 				if rpnBuilder.lastTokenWasOp == "no" {
+					// An empty call `foo()` invokes with no arguments: emit the
+					// zero-argument call instead of opening a bracket that would
+					// close with no operand (same root cause as empty `[]`/`{}`).
+					if isEmptyBracket(expr, i, ')') {
+						i = consumeSpaces(expr, i+1, &parsingCtx) + 1
+						err = rpnBuilder.handleEmptyConstructor()
+						if err != nil {
+							return nil, err
+						}
+						break
+					}
 					// This counts as a bracket and as an operator:
 					rpnBuilder.handleOp("()")
 					// Add it as a bracket to the op stack:

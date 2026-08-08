@@ -164,12 +164,13 @@ func (r *RPNBuilder) handleToken(token Token) error {
 	return nil
 }
 
-// handleEmptyConstructor emits a zero-argument constructor call for an empty
-// collection literal (`[]` or `{}`). The constructor Function token has already
-// been pushed by the caller; here we add an empty tupleToken operand and the
-// "()" call op, mirroring the non-empty path (`[fn, args, ()]`) instead of
-// opening a bracket that would immediately close with no operand and leak a raw
-// "[" / "{" op into the RPN.
+// handleEmptyConstructor emits a zero-argument call for an empty bracket pair:
+// a collection literal (`[]` or `{}`) or a no-argument function call (`foo()`).
+// The callable token (constructor Function or variable) has already been pushed
+// by the caller; here we add an empty tupleToken operand and the "()" call op,
+// mirroring the non-empty path (`[fn, args, ()]`) instead of opening a bracket
+// that would immediately close with no operand and leak a raw open-bracket op
+// into the RPN.
 func (r *RPNBuilder) handleEmptyConstructor() error {
 	// The constructor Function is already on the RPN, so lastTokenWasOp is "no".
 	// Append the empty-tuple operand directly (handleToken would reject it in the
