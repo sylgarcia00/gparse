@@ -853,6 +853,38 @@ func TestDotThroughParse(t *testing.T) {
 	}
 }
 
+// TestNegativePayloadNumber guards a robustness bug: a negative number literal
+// in the JSON payload (e.g. {"n":-7}) starts with '-', which unmarshalLazyValue
+// used to route to its default case, returning an error that lazyJsonToken.get
+// then turned into a panic. Reading such a field must resolve cleanly.
+func TestNegativePayloadNumber(t *testing.T) {
+	payload := json.RawMessage(`{"n":-7,"f":-3.5}`)
+
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: `n == -7`, expectedResult: true},
+		{expr: `n < 0`, expectedResult: true},
+		{expr: `abs(n) == 7`, expectedResult: true},
+		{expr: `f == -3.5`, expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(payload)
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
 // TestDotThroughParseErrors covers "." applied to a non-map value (a runtime
 // unsupported-types error) and a dangling "." with no attribute name after it (a
 // parse-time syntax error).

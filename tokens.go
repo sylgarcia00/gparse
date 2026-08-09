@@ -294,6 +294,7 @@ func unmarshalLazyValue(rawJSON []byte) (Token, error) {
 	rawJSON = bytes.TrimSpace(rawJSON)
 	switch rawJSON[0] {
 	case
+		byte('-'), // JSON numbers may carry a leading minus (leading '+' is not valid JSON)
 		byte('0'), byte('1'), byte('2'), byte('3'), byte('4'),
 		byte('5'), byte('6'), byte('7'), byte('8'), byte('9'):
 
