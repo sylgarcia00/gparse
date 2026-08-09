@@ -105,6 +105,14 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `type(obj) == "map"`, payload: json.RawMessage(`{"obj":{"a":1}}`), expectedResult: true},
 		// type() of a len() result: an int.
 		{expr: `type(len("ab")) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
+
+		// abs() preserves numeral type; the negative operand comes from a unary
+		// minus (abs(-5)) and from arithmetic (abs(3 - 10)) — reading a negative
+		// literal straight from the JSON payload is a separate lexer gap.
+		{expr: `abs(-5) == 5`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `abs(3 - 10) == 7`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(abs(-3)) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(abs(-3.5)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
 	}
 
 	for _, test := range tests {
@@ -190,5 +198,46 @@ func TestBuiltinMinMaxErrors(t *testing.T) {
 	assertErrContains(t, err, "at least one argument")
 
 	_, err = builtinMin([]Token{intToken(1), strToken("x")}, nil)
+	assertErrContains(t, err, "not a number")
+}
+
+// TestBuiltinAbs covers the absolute value of both numeral kinds, the type
+// being preserved (abs of an int stays an int) and the non-negative pass-through
+// path.
+func TestBuiltinAbs(t *testing.T) {
+	tests := []struct {
+		name string
+		arg  Token
+		want Token
+	}{
+		{name: "negative int", arg: intToken(-3), want: intToken(3)},
+		{name: "positive int", arg: intToken(3), want: intToken(3)},
+		{name: "zero int", arg: intToken(0), want: intToken(0)},
+		{name: "negative float keeps float", arg: floatToken(-3.5), want: floatToken(3.5)},
+		{name: "positive float", arg: floatToken(3.5), want: floatToken(3.5)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinAbs([]Token{test.arg}, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v (%T), got %v (%T)", test.want, test.want, got, got)
+			}
+		})
+	}
+}
+
+// TestBuiltinAbsErrors covers the wrong-arity and non-numeral paths, both of
+// which must return an error rather than panic.
+func TestBuiltinAbsErrors(t *testing.T) {
+	_, err := builtinAbs([]Token{}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinAbs([]Token{intToken(1), intToken(2)}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinAbs([]Token{strToken("x")}, nil)
 	assertErrContains(t, err, "not a number")
 }

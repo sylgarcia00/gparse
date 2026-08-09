@@ -13,6 +13,7 @@ var builtinFunctions = map[string]Function{
 	"type": builtinType,
 	"min":  builtinMin,
 	"max":  builtinMax,
+	"abs":  builtinAbs,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -86,6 +87,36 @@ func builtinMax(args []Token, scope mapToken) (Token, error) {
 	return reduceNumeral("max", args, func(candidate float64, best float64) bool {
 		return candidate > best
 	})
+}
+
+// builtinAbs implements `abs(x)`: the absolute value of a single numeral
+// argument, preserving its type — abs(-3) stays an intToken, abs(-3.5) a
+// floatToken (mirroring how min/max return the original token kind). A
+// non-numeral argument is a RuntimeErr. Like Go's own arithmetic, the abs of
+// the most-negative intToken overflows back to itself; callers needing that
+// edge should use a float.
+func builtinAbs(args []Token, scope mapToken) (Token, error) {
+	arg, err := singleArg("abs", args)
+	if err != nil {
+		return nil, err
+	}
+
+	switch v := arg.(type) {
+	case intToken:
+		if v < 0 {
+			return -v, nil
+		}
+		return v, nil
+	case floatToken:
+		if v < 0 {
+			return -v, nil
+		}
+		return v, nil
+	default:
+		return nil, RuntimeErr("abs() argument is not a number", map[string]any{
+			"argument": arg,
+		})
+	}
 }
 
 // reduceNumeral returns the argument for which better(candidate, currentBest)
