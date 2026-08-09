@@ -1,5 +1,7 @@
 package gparse
 
+import "math"
+
 // builtinFunctions is the registry of built-in functions, keyed by the name
 // used to call them in an expression (e.g. `len(x)`, `type(x)`); the parser
 // turns a matching identifier into the mapped Function token (see parse).
@@ -9,11 +11,15 @@ package gparse
 // in operators.go): a call like `min(a, b, c)` arrives here as a spread of one
 // arg per element.
 var builtinFunctions = map[string]Function{
-	"len":  builtinLen,
-	"type": builtinType,
-	"min":  builtinMin,
-	"max":  builtinMax,
-	"abs":  builtinAbs,
+	"len":   builtinLen,
+	"type":  builtinType,
+	"min":   builtinMin,
+	"max":   builtinMax,
+	"abs":   builtinAbs,
+	"floor": builtinFloor,
+	"ceil":  builtinCeil,
+	"round": builtinRound,
+	"sqrt":  builtinSqrt,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -114,6 +120,80 @@ func builtinAbs(args []Token, scope mapToken) (Token, error) {
 		return v, nil
 	default:
 		return nil, RuntimeErr("abs() argument is not a number", map[string]any{
+			"argument": arg,
+		})
+	}
+}
+
+// builtinFloor implements `floor(x)`: the largest integer <= x. It takes a
+// single numeral and returns an intToken — floor/ceil/round always yield whole
+// numbers, and an int is the more useful type for a filter predicate (e.g.
+// `floor(x) == 3`). An intToken argument is already whole and is returned
+// unchanged; a floatToken is rounded down via math.Floor. A non-numeral
+// argument is a RuntimeErr.
+func builtinFloor(args []Token, scope mapToken) (Token, error) {
+	return numeralToInt("floor", args, math.Floor)
+}
+
+// builtinCeil implements `ceil(x)`: the smallest integer >= x. Same return-type
+// contract as floor (intToken out; int in stays that int); a floatToken is
+// rounded up via math.Ceil. A non-numeral argument is a RuntimeErr.
+func builtinCeil(args []Token, scope mapToken) (Token, error) {
+	return numeralToInt("ceil", args, math.Ceil)
+}
+
+// builtinRound implements `round(x)`: the nearest integer, rounding halves away
+// from zero (Go's math.Round semantics). Same return-type contract as floor
+// (intToken out; int in stays that int). A non-numeral argument is a
+// RuntimeErr.
+func builtinRound(args []Token, scope mapToken) (Token, error) {
+	return numeralToInt("round", args, math.Round)
+}
+
+// builtinSqrt implements `sqrt(x)`: the square root of a single numeral. Unlike
+// floor/ceil/round the result is generally irrational, so it always returns a
+// floatToken (even for a perfect square like sqrt(9) -> 3.0). A negative
+// operand is a RuntimeErr rather than a NaN; a non-numeral argument is a
+// RuntimeErr too.
+func builtinSqrt(args []Token, scope mapToken) (Token, error) {
+	arg, err := singleArg("sqrt", args)
+	if err != nil {
+		return nil, err
+	}
+
+	val, ok := asFloat(arg)
+	if !ok {
+		return nil, RuntimeErr("sqrt() argument is not a number", map[string]any{
+			"argument": arg,
+		})
+	}
+	if val < 0 {
+		return nil, RuntimeErr("sqrt of negative number", map[string]any{
+			"argument": arg,
+		})
+	}
+
+	return floatToken(math.Sqrt(val)), nil
+}
+
+// numeralToInt is the shared body of floor/ceil/round: it validates a single
+// numeral argument and returns an intToken. An intToken is already whole and is
+// returned unchanged (int in -> same int out); a floatToken is passed through
+// round (math.Floor/Ceil/Round) before the intToken conversion. A non-numeral
+// argument is a RuntimeErr naming the calling function.
+func numeralToInt(name string, args []Token, round func(float64) float64) (Token, error) {
+	arg, err := singleArg(name, args)
+	if err != nil {
+		return nil, err
+	}
+
+	switch v := arg.(type) {
+	case intToken:
+		return v, nil
+	case floatToken:
+		return intToken(round(float64(v))), nil
+	default:
+		return nil, RuntimeErr(name+"() argument is not a number", map[string]any{
 			"argument": arg,
 		})
 	}

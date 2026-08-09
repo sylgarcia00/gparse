@@ -113,6 +113,17 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `abs(3 - 10) == 7`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `type(abs(-3)) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `type(abs(-3.5)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
+
+		// floor/ceil/round return an int (whole numbers); an int argument is
+		// returned unchanged. sqrt always returns a float.
+		{expr: `floor(3.7) == 3`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `ceil(2.1) == 3`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `round(2.5) == 3`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `floor(5) == 5`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(floor(3.7)) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(ceil(2.1)) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `sqrt(9.0) == 3.0`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(sqrt(9.0)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
 	}
 
 	for _, test := range tests {
@@ -240,4 +251,102 @@ func TestBuiltinAbsErrors(t *testing.T) {
 
 	_, err = builtinAbs([]Token{strToken("x")}, nil)
 	assertErrContains(t, err, "not a number")
+}
+
+// TestBuiltinFloorCeilRound covers floor/ceil/round on both numeral kinds: a
+// float is rounded to a whole intToken (verified via the exact type, not just
+// the value), and an int argument is returned unchanged as the same intToken.
+func TestBuiltinFloorCeilRound(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func([]Token, mapToken) (Token, error)
+		arg  Token
+		want Token
+	}{
+		{name: "floor float down", fn: builtinFloor, arg: floatToken(3.7), want: intToken(3)},
+		{name: "floor negative float", fn: builtinFloor, arg: floatToken(-1.2), want: intToken(-2)},
+		{name: "floor int unchanged", fn: builtinFloor, arg: intToken(5), want: intToken(5)},
+		{name: "ceil float up", fn: builtinCeil, arg: floatToken(2.1), want: intToken(3)},
+		{name: "ceil negative float", fn: builtinCeil, arg: floatToken(-1.2), want: intToken(-1)},
+		{name: "ceil int unchanged", fn: builtinCeil, arg: intToken(5), want: intToken(5)},
+		{name: "round half away from zero", fn: builtinRound, arg: floatToken(2.5), want: intToken(3)},
+		{name: "round negative half", fn: builtinRound, arg: floatToken(-2.5), want: intToken(-3)},
+		{name: "round int unchanged", fn: builtinRound, arg: intToken(7), want: intToken(7)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := test.fn([]Token{test.arg}, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v (%T), got %v (%T)", test.want, test.want, got, got)
+			}
+		})
+	}
+}
+
+// TestBuiltinFloorCeilRoundErrors covers the wrong-arity and non-numeral paths
+// for all three whole-number functions, each of which must return an error
+// rather than panic.
+func TestBuiltinFloorCeilRoundErrors(t *testing.T) {
+	fns := map[string]func([]Token, mapToken) (Token, error){
+		"floor": builtinFloor,
+		"ceil":  builtinCeil,
+		"round": builtinRound,
+	}
+
+	for name, fn := range fns {
+		t.Run(name, func(t *testing.T) {
+			_, err := fn([]Token{}, nil)
+			assertErrContains(t, err, "exactly one argument")
+
+			_, err = fn([]Token{intToken(1), intToken(2)}, nil)
+			assertErrContains(t, err, "exactly one argument")
+
+			_, err = fn([]Token{strToken("x")}, nil)
+			assertErrContains(t, err, "not a number")
+		})
+	}
+}
+
+// TestBuiltinSqrt covers sqrt returning a floatToken for both int and float
+// operands, including a perfect square (sqrt(9) -> 3.0, still a float).
+func TestBuiltinSqrt(t *testing.T) {
+	tests := []struct {
+		name string
+		arg  Token
+		want Token
+	}{
+		{name: "float operand", arg: floatToken(9.0), want: floatToken(3.0)},
+		{name: "int operand stays float", arg: intToken(16), want: floatToken(4.0)},
+		{name: "zero", arg: intToken(0), want: floatToken(0.0)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinSqrt([]Token{test.arg}, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v (%T), got %v (%T)", test.want, test.want, got, got)
+			}
+		})
+	}
+}
+
+// TestBuiltinSqrtErrors covers wrong-arity, non-numeral, and the negative-input
+// guard (a RuntimeErr rather than a NaN).
+func TestBuiltinSqrtErrors(t *testing.T) {
+	_, err := builtinSqrt([]Token{}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinSqrt([]Token{intToken(1), intToken(2)}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinSqrt([]Token{strToken("x")}, nil)
+	assertErrContains(t, err, "not a number")
+
+	_, err = builtinSqrt([]Token{intToken(-4)}, nil)
+	assertErrContains(t, err, "sqrt of negative number")
 }
