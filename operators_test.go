@@ -99,6 +99,56 @@ func TestFloatLiteralBaseError(t *testing.T) {
 	}
 }
 
+// TestScientificNotationLexing verifies exponent literals (2e5, 1.5e-3, 2E+10)
+// lex as floats and flow through the arithmetic path via the public Parse entry.
+func TestScientificNotationLexing(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: "2e3 == 2000", expectedResult: true},
+		{expr: "2E3 == 2000", expectedResult: true},
+		{expr: "1.5e2 == 150", expectedResult: true},
+		{expr: "2e+3 == 2000", expectedResult: true},
+		{expr: "5e-1 == 0.5", expectedResult: true},
+		{expr: "1e3 + 1 == 1001", expectedResult: true},
+		// Scientific notation is always a float, even with an integer mantissa.
+		{expr: `type(2e3) == "float"`, expectedResult: true},
+		{expr: "2e3 == 2001", expectedResult: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(json.RawMessage("{}"))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
+// TestScientificNotationBareE verifies a trailing 'e' with no exponent digits
+// is not swallowed into the number. If it were, ParseFloat("1e") would fail and
+// surface a parse error; instead the number lexes as int 1 and the payload
+// variable `e` resolves independently, so `1 == e_val` holds.
+func TestScientificNotationBareE(t *testing.T) {
+	// Here `e` is a real payload field: the '1' must lex as its own int (no
+	// exponent digits follow the 'e'), then `e` resolves to 1 from the payload.
+	expr, err := Parse("1 == e")
+	assertNoErr(t, err)
+
+	result, err := expr.Evaluate(json.RawMessage(`{"e":1}`))
+	assertNoErr(t, err)
+	if !result {
+		t.Fatalf("expected `1 == e` to hold with payload e=1")
+	}
+}
+
 // TestArithmeticOpResultTypes checks the concrete Token type and value
 // returned by arithmeticOp for each operand combination, which the boolean
 // public entry point cannot distinguish (e.g. intToken vs floatToken).

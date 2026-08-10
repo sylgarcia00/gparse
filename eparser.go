@@ -549,14 +549,32 @@ func parseNumber(expr []rune, index int) (newIndex int, token Token, err error) 
 	}
 
 	isFloat := false
+	sawExponent := false
 
 	// Find the end of the numerical literal. A single '.' switches to the
-	// float path; the base != 10 check below rejects e.g. `0x1.5` with a
-	// clear message rather than silently splitting the token.
+	// float path; an 'e'/'E' exponent (base 10 only) also switches to float.
+	// The base != 10 check below rejects e.g. `0x1.5` with a clear message
+	// rather than silently splitting the token.
 	for ; i < len(expr); i++ {
 		if expr[i] == '.' && !isFloat {
 			isFloat = true
 			continue
+		}
+
+		// Scientific notation: `2e5`, `1.5e-3`, `2E+10`. Base 10 only, once,
+		// and only when an optional sign is followed by at least one digit — so
+		// a trailing `e` (or hex digit 'e') is not swallowed here.
+		if base == 10 && !sawExponent && (expr[i] == 'e' || expr[i] == 'E') {
+			j := i + 1
+			if j < len(expr) && (expr[j] == '+' || expr[j] == '-') {
+				j++
+			}
+			if j < len(expr) && unicode.IsNumber(expr[j]) {
+				isFloat = true
+				sawExponent = true
+				i = j // consume 'e' and optional sign; loop's i++ passes the first exponent digit
+				continue
+			}
 		}
 
 		if !isNumberFn(expr[i]) {
