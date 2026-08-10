@@ -1,6 +1,9 @@
 package gparse
 
-import "math"
+import (
+	"math"
+	"strconv"
+)
 
 // builtinFunctions is the registry of built-in functions, keyed by the name
 // used to call them in an expression (e.g. `len(x)`, `type(x)`); the parser
@@ -20,6 +23,9 @@ var builtinFunctions = map[string]Function{
 	"ceil":  builtinCeil,
 	"round": builtinRound,
 	"sqrt":  builtinSqrt,
+	"str":   builtinStr,
+	"int":   builtinInt,
+	"float": builtinFloat,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -245,4 +251,99 @@ func singleArg(name string, args []Token) (Token, error) {
 		})
 	}
 	return args[0], nil
+}
+
+// builtinStr implements `str(x)`: a strToken holding the string rendering of its
+// single argument, mirroring cparse's default_str (tok.str()). A strToken is
+// returned unchanged; any other token is rendered via its String() method. Note
+// strToken.String() JSON-quotes, so passing through the original (rather than
+// re-rendering) is what makes str("a") == "a" instead of "\"a\"".
+func builtinStr(args []Token, scope mapToken) (Token, error) {
+	arg, err := singleArg("str", args)
+	if err != nil {
+		return nil, err
+	}
+
+	if s, ok := arg.(strToken); ok {
+		return s, nil
+	}
+	return strToken(arg.String()), nil
+}
+
+// builtinInt implements `int(x)`: always an intToken. An intToken passes
+// through; a floatToken truncates toward zero (Go int64 conversion); a strToken
+// parses as a base-10 integer (mirroring cparse's default_int strtol base 10). A
+// boolToken converts to 1/0 — cparse treats bool as a numeric type (the NUM bit
+// is set), so this stays faithful. Any other type, or a non-numeric string, is a
+// RuntimeErr. Deliberate divergence from cparse: strtol partial-parses ("3abc"
+// -> 3); we parse the whole string and error on malformed input (Go-idiomatic).
+func builtinInt(args []Token, scope mapToken) (Token, error) {
+	arg, err := singleArg("int", args)
+	if err != nil {
+		return nil, err
+	}
+
+	switch v := arg.(type) {
+	case intToken:
+		return v, nil
+	case floatToken:
+		return intToken(int64(v)), nil
+	case boolToken:
+		if v {
+			return intToken(1), nil
+		}
+		return intToken(0), nil
+	case strToken:
+		n, parseErr := strconv.ParseInt(string(v), 10, 64)
+		if parseErr != nil {
+			return nil, RuntimeErr("int() cannot convert string to integer", map[string]any{
+				"argument": arg,
+				"error":    parseErr,
+			})
+		}
+		return intToken(n), nil
+	default:
+		return nil, RuntimeErr("int() argument cannot be converted to an integer", map[string]any{
+			"argument": arg,
+		})
+	}
+}
+
+// builtinFloat implements `float(x)`: always a floatToken. int/float pass
+// through as a float; a strToken parses via strconv.ParseFloat (mirroring
+// cparse's default_float strtod). A boolToken converts to 1.0/0.0 — cparse
+// treats bool as numeric (the NUM bit is set), so this stays faithful. Any other
+// type, or a non-numeric string, is a RuntimeErr. Deliberate divergence from
+// cparse: strtod partial-parses ("3abc" -> 3); we parse the whole string and
+// error on malformed input (Go-idiomatic).
+func builtinFloat(args []Token, scope mapToken) (Token, error) {
+	arg, err := singleArg("float", args)
+	if err != nil {
+		return nil, err
+	}
+
+	switch v := arg.(type) {
+	case floatToken:
+		return v, nil
+	case intToken:
+		return floatToken(v), nil
+	case boolToken:
+		if v {
+			return floatToken(1), nil
+		}
+		return floatToken(0), nil
+	case strToken:
+		f, parseErr := strconv.ParseFloat(string(v), 64)
+		if parseErr != nil {
+			return nil, RuntimeErr("float() cannot convert string to float", map[string]any{
+				"argument": arg,
+				"error":    parseErr,
+			})
+		}
+		return floatToken(f), nil
+	default:
+		return nil, RuntimeErr("float() argument cannot be converted to a float", map[string]any{
+			"argument": arg,
+		})
+	}
 }

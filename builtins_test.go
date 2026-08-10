@@ -124,6 +124,18 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `type(ceil(2.1)) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `sqrt(9.0) == 3.0`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `type(sqrt(9.0)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
+
+		// str/int/float type conversions: int truncates toward zero, float widens
+		// an int, str renders unquoted. type() confirms the resulting kind.
+		{expr: `int(3.7) == 3`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `int("42") == 42`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(int(3.7)) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `float(5) == 5.0`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `float("2.5") == 2.5`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(float(5)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `str(42) == "42"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `str("a") == "a"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(str(1)) == "string"`, payload: json.RawMessage("{}"), expectedResult: true},
 	}
 
 	for _, test := range tests {
@@ -349,4 +361,124 @@ func TestBuiltinSqrtErrors(t *testing.T) {
 
 	_, err = builtinSqrt([]Token{intToken(-4)}, nil)
 	assertErrContains(t, err, "sqrt of negative number")
+}
+
+// TestBuiltinStr covers str() rendering each token kind. A strToken passes
+// through unquoted (str("a") == "a"), while other kinds use their String().
+func TestBuiltinStr(t *testing.T) {
+	tests := []struct {
+		name string
+		arg  Token
+		want strToken
+	}{
+		{name: "string passthrough", arg: strToken("a"), want: "a"},
+		{name: "int", arg: intToken(42), want: "42"},
+		{name: "negative int", arg: intToken(-7), want: "-7"},
+		{name: "float", arg: floatToken(3.5), want: "3.5"},
+		{name: "bool true", arg: boolToken(true), want: "true"},
+		{name: "none", arg: noneToken{}, want: "None"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinStr([]Token{test.arg}, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v (%T), got %v (%T)", test.want, test.want, got, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinStrError(t *testing.T) {
+	_, err := builtinStr([]Token{}, nil)
+	assertErrContains(t, err, "exactly one argument")
+}
+
+// TestBuiltinInt covers int() on each convertible kind: int passthrough, float
+// truncation toward zero, bool to 1/0, and base-10 string parsing.
+func TestBuiltinInt(t *testing.T) {
+	tests := []struct {
+		name string
+		arg  Token
+		want intToken
+	}{
+		{name: "int passthrough", arg: intToken(5), want: 5},
+		{name: "float truncates down", arg: floatToken(3.7), want: 3},
+		{name: "float truncates toward zero", arg: floatToken(-3.7), want: -3},
+		{name: "string base 10", arg: strToken("42"), want: 42},
+		{name: "negative string", arg: strToken("-8"), want: -8},
+		{name: "bool true", arg: boolToken(true), want: 1},
+		{name: "bool false", arg: boolToken(false), want: 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinInt([]Token{test.arg}, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v, got %v", test.want, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinIntErrors(t *testing.T) {
+	_, err := builtinInt([]Token{}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinInt([]Token{strToken("abc")}, nil)
+	assertErrContains(t, err, "cannot convert string to integer")
+
+	// Deliberate divergence from cparse strtol partial-parse: "3abc" is an error.
+	_, err = builtinInt([]Token{strToken("3abc")}, nil)
+	assertErrContains(t, err, "cannot convert string to integer")
+
+	_, err = builtinInt([]Token{listToken{intToken(1)}}, nil)
+	assertErrContains(t, err, "cannot be converted to an integer")
+}
+
+// TestBuiltinFloat covers float() on each convertible kind: float passthrough,
+// int widening, bool to 1.0/0.0, and string parsing.
+func TestBuiltinFloat(t *testing.T) {
+	tests := []struct {
+		name string
+		arg  Token
+		want floatToken
+	}{
+		{name: "float passthrough", arg: floatToken(3.5), want: 3.5},
+		{name: "int widens", arg: intToken(5), want: 5.0},
+		{name: "string", arg: strToken("2.5"), want: 2.5},
+		{name: "string integer", arg: strToken("42"), want: 42.0},
+		{name: "bool true", arg: boolToken(true), want: 1.0},
+		{name: "bool false", arg: boolToken(false), want: 0.0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinFloat([]Token{test.arg}, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v, got %v", test.want, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinFloatErrors(t *testing.T) {
+	_, err := builtinFloat([]Token{}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinFloat([]Token{strToken("abc")}, nil)
+	assertErrContains(t, err, "cannot convert string to float")
+
+	// Deliberate divergence from cparse strtod partial-parse: "3abc" is an error.
+	_, err = builtinFloat([]Token{strToken("3abc")}, nil)
+	assertErrContains(t, err, "cannot convert string to float")
+
+	_, err = builtinFloat([]Token{listToken{intToken(1)}}, nil)
+	assertErrContains(t, err, "cannot be converted to a float")
 }
