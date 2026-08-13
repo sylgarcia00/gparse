@@ -129,6 +129,16 @@ func asStr(t Token) (string, bool) {
 // equalsOp implements the "==" operator for the numeral combinations
 // int/int, float/float, int/float and float/int, returning a boolToken.
 func equalsOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
+	// None equals only None. Comparing None against a present value is false
+	// (not an error), so a filter predicate can test key presence directly:
+	// `user.email == None` is true only when the field is absent, and
+	// `field != None` is true when it is present.
+	_, none1 := t1.(noneToken)
+	_, none2 := t2.(noneToken)
+	if none1 || none2 {
+		return boolToken(none1 && none2), nil
+	}
+
 	// Same concrete type: direct comparison keeps int/int and float/float exact.
 	switch t1.(type) {
 	case intToken:

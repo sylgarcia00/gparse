@@ -743,6 +743,71 @@ func TestMapIndexOps(t *testing.T) {
 	assertErrContains(t, err, "unsupported types")
 }
 
+// TestNoneEqualityOps exercises "==" and "!=" against noneToken: None equals
+// only None, and comparing None with a present value is false (not an error),
+// so a filter predicate can test for an absent map key / JSON field.
+func TestNoneEqualityOps(t *testing.T) {
+	eq := operators["=="]
+	ne := operators["!="]
+
+	tests := []struct {
+		name   string
+		t1, t2 Token
+		wantEq bool
+	}{
+		{name: "none == none", t1: noneToken{}, t2: noneToken{}, wantEq: true},
+		{name: "none == int", t1: noneToken{}, t2: intToken(0), wantEq: false},
+		{name: "int == none", t1: intToken(0), t2: noneToken{}, wantEq: false},
+		{name: "none == string", t1: noneToken{}, t2: strToken(""), wantEq: false},
+		{name: "none == bool", t1: noneToken{}, t2: boolToken(false), wantEq: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := eq(test.t1, test.t2, "==", nil)
+			assertNoErr(t, err)
+			if got != boolToken(test.wantEq) {
+				t.Fatalf("== expected %v, got %v", test.wantEq, got)
+			}
+
+			got, err = ne(test.t1, test.t2, "!=", nil)
+			assertNoErr(t, err)
+			if got != boolToken(!test.wantEq) {
+				t.Fatalf("!= expected %v, got %v", !test.wantEq, got)
+			}
+		})
+	}
+}
+
+// TestNoneThroughParse covers None equality end-to-end via Parse. A missing
+// field on a JSON object resolves to a noneToken (dot access), so absence can
+// be tested by comparing missing accesses; there is no literal None keyword yet.
+func TestNoneThroughParse(t *testing.T) {
+	payload := json.RawMessage(`{"user":{"name":"bob"}}`)
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: `user.email == user.phone`, expectedResult: true}, // None == None
+		{expr: `user.name == user.phone`, expectedResult: false}, // present == None
+		{expr: `user.name != user.phone`, expectedResult: true},  // present != None
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(payload)
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
 // TestIndexThroughParse exercises "[]" indexing end-to-end via the public Parse
 // API, wrapped in a comparison because the bool-only Evaluate returns bool. It
 // also covers that "[]" binds tighter than "==" (indexing happens first).
@@ -953,12 +1018,16 @@ func TestDotThroughParseErrors(t *testing.T) {
 	assertErrContains(t, err, "expected an attribute name")
 
 	// A missing attribute resolves to None (verified directly in TestDotOps);
-	// comparing None with "==" is not a supported operation yet, so end-to-end
-	// it surfaces as an unsupported-types error rather than false.
+	// comparing None with a present value is false (not an error), so a filter
+	// predicate can test field presence. See TestNoneThroughParse for the
+	// None == None case.
 	expr, err = Parse(`user.missing == "x"`)
 	assertNoErr(t, err)
-	_, err = expr.Evaluate(json.RawMessage(`{"user":{"name":"bob"}}`))
-	assertErrContains(t, err, "unsupported types")
+	result, err := expr.Evaluate(json.RawMessage(`{"user":{"name":"bob"}}`))
+	assertNoErr(t, err)
+	if result != false {
+		t.Fatalf("expected user.missing == \"x\" to be false, got %v", result)
+	}
 }
 
 // TestCommaOp exercises the "," executor directly: a non-tuple left operand
