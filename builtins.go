@@ -30,6 +30,7 @@ var builtinFunctions = map[string]Function{
 	"lower": builtinLower,
 	"upper": builtinUpper,
 	"strip": builtinStrip,
+	"split": builtinSplit,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -371,6 +372,41 @@ func builtinUpper(args []Token, scope mapToken) (Token, error) {
 // `strip(user.name) == "Vini"`; a non-string argument is a RuntimeErr.
 func builtinStrip(args []Token, scope mapToken) (Token, error) {
 	return strTransform("strip", args, strings.TrimSpace)
+}
+
+// builtinSplit implements `split(s, sep)`: a listToken of the substrings of s
+// separated by each non-overlapping sep (strings.Split). Both arguments must be
+// strToken; anything else is a RuntimeErr. It complements lower/upper/strip for
+// working with JSON string fields — e.g. `split(tags, ",")` fans a delimited
+// field into a list that len/indexing can then work on. An empty sep splits s
+// into its UTF-8 runes, matching Go's own strings.Split semantics.
+func builtinSplit(args []Token, scope mapToken) (Token, error) {
+	if len(args) != 2 {
+		return nil, SyntaxErr("built-in function expects exactly two arguments", map[string]any{
+			"function": "split",
+			"gotArgs":  len(args),
+		})
+	}
+
+	s, ok := args[0].(strToken)
+	if !ok {
+		return nil, RuntimeErr("split() first argument is not a string", map[string]any{
+			"argument": args[0],
+		})
+	}
+	sep, ok := args[1].(strToken)
+	if !ok {
+		return nil, RuntimeErr("split() second argument is not a string", map[string]any{
+			"argument": args[1],
+		})
+	}
+
+	parts := strings.Split(string(s), string(sep))
+	out := make(listToken, len(parts))
+	for i, p := range parts {
+		out[i] = strToken(p)
+	}
+	return out, nil
 }
 
 func strTransform(name string, args []Token, fn func(string) string) (Token, error) {

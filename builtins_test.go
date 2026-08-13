@@ -145,6 +145,12 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `type(lower("X")) == "string"`, payload: json.RawMessage("{}"), expectedResult: true},
 		// strip trims surrounding whitespace off a JSON field before comparing.
 		{expr: `strip(name) == "Vini"`, payload: json.RawMessage(`{"name":"  Vini  "}`), expectedResult: true},
+
+		// split fans a delimited string into a list; len/type/indexing then work
+		// on the result. The motivating use is a delimited JSON field (tags).
+		{expr: `len(split("a,b,c", ",")) == 3`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(split("a", ",")) == "list"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `split(tags, ",")[1] == "b"`, payload: json.RawMessage(`{"tags":"a,b,c"}`), expectedResult: true},
 	}
 
 	for _, test := range tests {
@@ -567,4 +573,53 @@ func TestBuiltinStripErrors(t *testing.T) {
 
 	_, err = builtinStrip([]Token{intToken(1)}, nil)
 	assertErrContains(t, err, "strip() argument is not a string")
+}
+
+// TestBuiltinSplit covers the common separator case, the empty-separator
+// (per-rune) case, a separator absent from the input (single-element list), and
+// the empty-input edge (one empty string).
+func TestBuiltinSplit(t *testing.T) {
+	tests := []struct {
+		name string
+		s    strToken
+		sep  strToken
+		want listToken
+	}{
+		{name: "comma", s: "a,b,c", sep: ",", want: listToken{strToken("a"), strToken("b"), strToken("c")}},
+		{name: "empty sep runes", s: "áb", sep: "", want: listToken{strToken("á"), strToken("b")}},
+		{name: "sep absent", s: "abc", sep: ",", want: listToken{strToken("abc")}},
+		{name: "empty input", s: "", sep: ",", want: listToken{strToken("")}},
+		{name: "trailing sep keeps empty", s: "a,", sep: ",", want: listToken{strToken("a"), strToken("")}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinSplit([]Token{test.s, test.sep}, nil)
+			assertNoErr(t, err)
+
+			list, ok := got.(listToken)
+			if !ok {
+				t.Fatalf("expected a listToken, got %T", got)
+			}
+			if len(list) != len(test.want) {
+				t.Fatalf("expected %v, got %v", test.want, list)
+			}
+			for i := range test.want {
+				if list[i] != test.want[i] {
+					t.Fatalf("at %d: expected %v, got %v", i, test.want[i], list[i])
+				}
+			}
+		})
+	}
+}
+
+func TestBuiltinSplitErrors(t *testing.T) {
+	_, err := builtinSplit([]Token{strToken("a")}, nil)
+	assertErrContains(t, err, "exactly two arguments")
+
+	_, err = builtinSplit([]Token{intToken(1), strToken(",")}, nil)
+	assertErrContains(t, err, "split() first argument is not a string")
+
+	_, err = builtinSplit([]Token{strToken("a"), intToken(1)}, nil)
+	assertErrContains(t, err, "split() second argument is not a string")
 }
