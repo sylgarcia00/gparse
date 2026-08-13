@@ -143,6 +143,8 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `upper("aBc") == "ABC"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `lower("ÁÉ") == "áé"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `type(lower("X")) == "string"`, payload: json.RawMessage("{}"), expectedResult: true},
+		// strip trims surrounding whitespace off a JSON field before comparing.
+		{expr: `strip(name) == "Vini"`, payload: json.RawMessage(`{"name":"  Vini  "}`), expectedResult: true},
 	}
 
 	for _, test := range tests {
@@ -528,4 +530,41 @@ func TestBuiltinLowerUpperErrors(t *testing.T) {
 
 	_, err = builtinUpper([]Token{listToken{intToken(1)}}, nil)
 	assertErrContains(t, err, "upper() argument is not a string")
+}
+
+// TestBuiltinStrip covers whitespace trimming, including inner whitespace that
+// must be preserved, a Unicode-space case, and the empty/all-space edges.
+func TestBuiltinStrip(t *testing.T) {
+	tests := []struct {
+		name string
+		arg  strToken
+		want strToken
+	}{
+		{name: "both sides", arg: "  hi  ", want: "hi"},
+		{name: "tabs and newline", arg: "\t hi\n", want: "hi"},
+		{name: "inner space kept", arg: "  a b  ", want: "a b"},
+		{name: "unicode space", arg: " hi ", want: "hi"},
+		{name: "nothing to trim", arg: "hi", want: "hi"},
+		{name: "all whitespace", arg: "   ", want: ""},
+		{name: "empty", arg: "", want: ""},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinStrip([]Token{test.arg}, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %q, got %q", test.want, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinStripErrors(t *testing.T) {
+	_, err := builtinStrip([]Token{}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinStrip([]Token{intToken(1)}, nil)
+	assertErrContains(t, err, "strip() argument is not a string")
 }

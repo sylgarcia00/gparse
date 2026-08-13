@@ -29,6 +29,7 @@ var builtinFunctions = map[string]Function{
 	"float": builtinFloat,
 	"lower": builtinLower,
 	"upper": builtinUpper,
+	"strip": builtinStrip,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -357,14 +358,22 @@ func builtinFloat(args []Token, scope mapToken) (Token, error) {
 // `lower(user.email) == "a@b.com"`; only a string is meaningful, so any other
 // type is a RuntimeErr rather than a silent pass-through.
 func builtinLower(args []Token, scope mapToken) (Token, error) {
-	return foldCase("lower", args, strings.ToLower)
+	return strTransform("lower", args, strings.ToLower)
 }
 
 func builtinUpper(args []Token, scope mapToken) (Token, error) {
-	return foldCase("upper", args, strings.ToUpper)
+	return strTransform("upper", args, strings.ToUpper)
 }
 
-func foldCase(name string, args []Token, fold func(string) string) (Token, error) {
+// builtinStrip implements `strip(s)`: the single strToken argument with leading
+// and trailing whitespace removed (strings.TrimSpace). Like lower/upper it
+// targets JSON-field filtering, where values often carry stray padding, e.g.
+// `strip(user.name) == "Vini"`; a non-string argument is a RuntimeErr.
+func builtinStrip(args []Token, scope mapToken) (Token, error) {
+	return strTransform("strip", args, strings.TrimSpace)
+}
+
+func strTransform(name string, args []Token, fn func(string) string) (Token, error) {
 	arg, err := singleArg(name, args)
 	if err != nil {
 		return nil, err
@@ -376,5 +385,5 @@ func foldCase(name string, args []Token, fold func(string) string) (Token, error
 			"argument": arg,
 		})
 	}
-	return strToken(fold(string(v))), nil
+	return strToken(fn(string(v))), nil
 }
