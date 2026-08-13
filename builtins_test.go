@@ -136,6 +136,13 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `str(42) == "42"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `str("a") == "a"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `type(str(1)) == "string"`, payload: json.RawMessage("{}"), expectedResult: true},
+
+		// lower/upper case-fold a string; the motivating use is case-insensitive
+		// comparison of a JSON field (here read straight from the payload).
+		{expr: `lower(email) == "a@b.com"`, payload: json.RawMessage(`{"email":"A@B.com"}`), expectedResult: true},
+		{expr: `upper("aBc") == "ABC"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `lower("ÁÉ") == "áé"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(lower("X")) == "string"`, payload: json.RawMessage("{}"), expectedResult: true},
 	}
 
 	for _, test := range tests {
@@ -481,4 +488,44 @@ func TestBuiltinFloatErrors(t *testing.T) {
 
 	_, err = builtinFloat([]Token{listToken{intToken(1)}}, nil)
 	assertErrContains(t, err, "cannot be converted to a float")
+}
+
+// TestBuiltinLowerUpper covers case folding, including a non-ASCII (Unicode)
+// letter and the empty-string edge, for both lower() and upper().
+func TestBuiltinLowerUpper(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   Function
+		arg  strToken
+		want strToken
+	}{
+		{name: "lower ascii", fn: builtinLower, arg: "AbC", want: "abc"},
+		{name: "lower already lower", fn: builtinLower, arg: "abc", want: "abc"},
+		{name: "lower unicode", fn: builtinLower, arg: "ÁÉ", want: "áé"},
+		{name: "lower empty", fn: builtinLower, arg: "", want: ""},
+		{name: "upper ascii", fn: builtinUpper, arg: "aBc", want: "ABC"},
+		{name: "upper unicode", fn: builtinUpper, arg: "áé", want: "ÁÉ"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := test.fn([]Token{test.arg}, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v, got %v", test.want, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinLowerUpperErrors(t *testing.T) {
+	_, err := builtinLower([]Token{}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinLower([]Token{intToken(1)}, nil)
+	assertErrContains(t, err, "lower() argument is not a string")
+
+	_, err = builtinUpper([]Token{listToken{intToken(1)}}, nil)
+	assertErrContains(t, err, "upper() argument is not a string")
 }

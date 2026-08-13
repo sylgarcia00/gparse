@@ -3,6 +3,7 @@ package gparse
 import (
 	"math"
 	"strconv"
+	"strings"
 )
 
 // builtinFunctions is the registry of built-in functions, keyed by the name
@@ -26,6 +27,8 @@ var builtinFunctions = map[string]Function{
 	"str":   builtinStr,
 	"int":   builtinInt,
 	"float": builtinFloat,
+	"lower": builtinLower,
+	"upper": builtinUpper,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -346,4 +349,32 @@ func builtinFloat(args []Token, scope mapToken) (Token, error) {
 			"argument": arg,
 		})
 	}
+}
+
+// builtinLower implements `lower(s)` and builtinUpper `upper(s)`: the single
+// strToken argument with ASCII/Unicode case folded down or up (strings.ToLower/
+// ToUpper). These exist for case-insensitive JSON-field filtering, e.g.
+// `lower(user.email) == "a@b.com"`; only a string is meaningful, so any other
+// type is a RuntimeErr rather than a silent pass-through.
+func builtinLower(args []Token, scope mapToken) (Token, error) {
+	return foldCase("lower", args, strings.ToLower)
+}
+
+func builtinUpper(args []Token, scope mapToken) (Token, error) {
+	return foldCase("upper", args, strings.ToUpper)
+}
+
+func foldCase(name string, args []Token, fold func(string) string) (Token, error) {
+	arg, err := singleArg(name, args)
+	if err != nil {
+		return nil, err
+	}
+
+	v, ok := arg.(strToken)
+	if !ok {
+		return nil, RuntimeErr(name+"() argument is not a string", map[string]any{
+			"argument": arg,
+		})
+	}
+	return strToken(fold(string(v))), nil
 }
