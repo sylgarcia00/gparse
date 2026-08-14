@@ -90,6 +90,56 @@ func TestFloatLiteralLexing(t *testing.T) {
 	}
 }
 
+// TestBoolEqualityThroughParse verifies == and != compare two boolean values.
+// Booleans reach the operator two ways: as JSON bool fields in the data, and as
+// the result of notOp (`!`), which yields a boolToken. A boolean compared
+// against a non-boolean is an undefined operation and must error, not be false.
+func TestBoolEqualityThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		vars           map[string]any
+		expectedResult bool
+	}{
+		// JSON bool fields compared directly.
+		{expr: "a == b", vars: map[string]any{"a": true, "b": true}, expectedResult: true},
+		{expr: "a == b", vars: map[string]any{"a": true, "b": false}, expectedResult: false},
+		{expr: "a != b", vars: map[string]any{"a": true, "b": false}, expectedResult: true},
+		{expr: "a != b", vars: map[string]any{"a": false, "b": false}, expectedResult: false},
+		// notOp yields booleans, so `!x == !y` lands in the bool/bool case.
+		{expr: "!(1 == 1) == (1 == 2)", expectedResult: true},
+		{expr: "!(1 == 1) != (2 == 2)", expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			rawJSON, err := json.Marshal(test.vars)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(rawJSON)
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
+// TestBoolComparedToNonBoolErrors verifies a boolean against a numeral or string
+// is an undefined operation, matching the strToken guard's semantics.
+func TestBoolComparedToNonBoolErrors(t *testing.T) {
+	expr, err := Parse("a == 1")
+	assertNoErr(t, err)
+
+	_, err = expr.Evaluate(json.RawMessage(`{"a": true}`))
+	if err == nil {
+		t.Fatalf("expected an error comparing a boolean against an int")
+	}
+}
+
 // TestFloatLiteralBaseError verifies a decimal point on a non-base-10 literal
 // is rejected with a clear message rather than silently splitting the token.
 func TestFloatLiteralBaseError(t *testing.T) {

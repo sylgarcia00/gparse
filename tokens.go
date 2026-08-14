@@ -299,15 +299,18 @@ func unmarshalLazyValue(rawJSON []byte) (Token, error) {
 		byte('5'), byte('6'), byte('7'), byte('8'), byte('9'):
 
 		var f float64
-		return floatToken(f), json.Unmarshal(rawJSON, &f)
+		err := json.Unmarshal(rawJSON, &f)
+		return floatToken(f), err
 
 	case byte('"'):
 		var s string
-		return strToken(s), json.Unmarshal(rawJSON, &s)
+		err := json.Unmarshal(rawJSON, &s)
+		return strToken(s), err
 
 	case byte('f'), byte('t'):
 		var b bool
-		return boolToken(b), json.Unmarshal(rawJSON, &b)
+		err := json.Unmarshal(rawJSON, &b)
+		return boolToken(b), err
 
 	case byte('{'):
 		var m map[string]json.RawMessage

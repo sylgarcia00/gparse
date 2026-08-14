@@ -162,6 +162,15 @@ func equalsOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, erro
 			return boolToken(t1 == t2), nil
 		}
 		return nil, unsupportedTypesErr(op, t1, t2)
+	case boolToken:
+		// Two booleans compare by value; a bool against any other type is an
+		// undefined operation, not simply false. notOp already yields
+		// boolTokens, so `!x == !y` and comparisons of JSON bool fields land
+		// here.
+		if _, ok := t2.(boolToken); ok {
+			return boolToken(t1 == t2), nil
+		}
+		return nil, unsupportedTypesErr(op, t1, t2)
 	}
 
 	f1, ok1 := asFloat(t1)
