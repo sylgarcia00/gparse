@@ -112,9 +112,15 @@ func asInt(t Token) (int, bool) {
 	return int(v), ok
 }
 
-// asBool returns the boolean value of a boolToken. The second return is
-// false for any other type.
+// asBool returns the boolean value of a boolToken. None is falsy: it yields
+// (false, true), mirroring cparse's packToken::asBool, so a filter predicate
+// can test key absence in a boolean context — `!user.email` is true when the
+// field is missing, and `field || fallback` falls through when it is. The
+// second return is false for any other (present, non-bool) type.
 func asBool(t Token) (bool, bool) {
+	if _, ok := t.(noneToken); ok {
+		return false, true
+	}
 	v, ok := t.(boolToken)
 	return bool(v), ok
 }

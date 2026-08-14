@@ -808,6 +808,73 @@ func TestNoneThroughParse(t *testing.T) {
 	}
 }
 
+// TestNoneTruthiness checks that noneToken is falsy in a boolean context
+// (mirroring cparse's packToken::asBool): None is false under &&, ||, and !,
+// while a present non-bool operand stays unsupported.
+func TestNoneTruthiness(t *testing.T) {
+	tests := []struct {
+		name     string
+		op       opToken
+		left     Token
+		right    Token
+		expected boolToken
+	}{
+		{name: "none&&true", op: "&&", left: noneToken{}, right: boolToken(true), expected: false},
+		{name: "none||true", op: "||", left: noneToken{}, right: boolToken(true), expected: true},
+		{name: "none||false", op: "||", left: noneToken{}, right: boolToken(false), expected: false},
+		{name: "true&&none", op: "&&", left: boolToken(true), right: noneToken{}, expected: false},
+		{name: "!none", op: "!", left: unaryPlaceholderToken{}, right: noneToken{}, expected: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			op := operators[test.op]
+			got, err := op(test.left, test.right, test.op, nil)
+			assertNoErr(t, err)
+
+			if got != test.expected {
+				t.Fatalf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+
+	// A present non-bool operand is still unsupported alongside None.
+	andOp := operators["&&"]
+	if _, err := andOp(noneToken{}, intToken(1), "&&", nil); err == nil {
+		t.Fatal("expected unsupported-types error for none && int")
+	}
+}
+
+// TestNoneTruthinessThroughParse exercises None-as-falsy end-to-end: a missing
+// dot-access field resolves to noneToken and behaves as false under ||/&&.
+// (Unary ! through Parse needs paren grouping, a separate pre-existing gap —
+// direct ! coverage lives in TestNoneTruthiness.)
+func TestNoneTruthinessThroughParse(t *testing.T) {
+	payload := json.RawMessage(`{"user":{"name":"bob"}}`)
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: `user.phone || 2 > 1`, expectedResult: true},  // false || true
+		{expr: `user.phone || 2 < 1`, expectedResult: false}, // false || false
+		{expr: `user.phone && 2 > 1`, expectedResult: false}, // false && true
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(payload)
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
 // TestIndexThroughParse exercises "[]" indexing end-to-end via the public Parse
 // API, wrapped in a comparison because the bool-only Evaluate returns bool. It
 // also covers that "[]" binds tighter than "==" (indexing happens first).
