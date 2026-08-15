@@ -81,7 +81,14 @@ parse-many-with-one-config need shows up. The bulk of the work is identical
 either way: introduce an internal `registry` struct and thread it through the
 three read sites.
 
-## Open questions for Vini
+## Open questions — RESOLVED
+
+Decided in `scope-decoupling.md` (plan of record, 2026-08-15): (1) `SamePrecAs`
+alias primary, raw int still accepted; (2) narrow `func(a, b any) (any, error)`
+public, full `Token` signature internal; (3) builtins first, operators same v1;
+(4) collision is an error. Original phrasing kept below for provenance.
+
+## Open questions for Vini (superseded — see above)
 
 1. **Precedence for custom ops — explicit int, or a "bind like `*`" alias?**
    Raw ints leak the C++ table (operators.go). An alias (`SamePrecAs("*")`) is
