@@ -14,6 +14,14 @@ type Token interface {
 	String() string
 }
 
+// Resolver is implemented by tokens whose concrete value is produced lazily,
+// such as a JSON field kept as raw bytes until first use. The evaluator unwraps
+// through this interface so it never depends on a concrete lazy type — letting
+// a host supply its own lazy-backed tokens from any source.
+type Resolver interface {
+	Resolve() Token
+}
+
 // opToken represents operators
 type opToken string
 
@@ -208,8 +216,8 @@ func (v varToken) Resolve(vars map[string]Token) Token {
 	// (see mapToken.getChildMap), mirroring cparse's parent-scope
 	// resolution. Nested field access below stays within one map.
 	value := resolveInScopeChain(vars, v[0])
-	if lazy, ok := value.(lazyJsonToken); ok {
-		value = lazy.Value()
+	if lazy, ok := value.(Resolver); ok {
+		value = lazy.Resolve()
 	}
 
 	for _, str := range v[1:] {
@@ -219,8 +227,8 @@ func (v varToken) Resolve(vars map[string]Token) Token {
 		}
 
 		value = m[str]
-		if lazy, ok := value.(lazyJsonToken); ok {
-			value = lazy.Value()
+		if lazy, ok := value.(Resolver); ok {
+			value = lazy.Resolve()
 		}
 	}
 
@@ -239,6 +247,8 @@ type lazyJsonToken struct {
 	value Token
 	json  json.RawMessage
 }
+
+var _ Resolver = lazyJsonToken{}
 
 // NewLazyJsonMap will parse the map in an lazy way so we don't
 // unmarshal anything we don't need to at first
@@ -275,7 +285,7 @@ func (l lazyJsonToken) String() string {
 	return string(l.json)
 }
 
-func (l lazyJsonToken) Value() Token {
+func (l lazyJsonToken) Resolve() Token {
 	if l.value == nil {
 		var err error
 		l.value, err = unmarshalLazyValue(l.json)

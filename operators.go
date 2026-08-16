@@ -504,8 +504,8 @@ func indexOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error
 		// Values read from JSON input are stored lazily; unwrap so downstream
 		// operators (and chained access like a.b.c) see the concrete token,
 		// matching varToken.Resolve which also unwraps lazyJsonToken.
-		if lazy, ok := value.(lazyJsonToken); ok {
-			value = lazy.Value()
+		if lazy, ok := value.(Resolver); ok {
+			value = lazy.Resolve()
 		}
 		return value, nil
 	}
