@@ -58,6 +58,45 @@ func TestParse(t *testing.T) {
 			},
 			expectedResult: true,
 		},
+		{
+			expr:           "true",
+			vars:           map[string]any{},
+			expectedResult: true,
+		},
+		{
+			expr:           "false",
+			vars:           map[string]any{},
+			expectedResult: false,
+		},
+		{
+			expr:           "true == true",
+			vars:           map[string]any{},
+			expectedResult: true,
+		},
+		{
+			expr:           "true == false",
+			vars:           map[string]any{},
+			expectedResult: false,
+		},
+		{
+			expr:           "true != false",
+			vars:           map[string]any{},
+			expectedResult: true,
+		},
+		{
+			expr: "a == true",
+			vars: map[string]any{
+				"a": true,
+			},
+			expectedResult: true,
+		},
+		{
+			expr: "a == false",
+			vars: map[string]any{
+				"a": true,
+			},
+			expectedResult: false,
+		},
 	}
 
 	for _, test := range tests {

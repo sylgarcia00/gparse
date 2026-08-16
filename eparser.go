@@ -107,6 +107,15 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 				continue
 			}
 
+			if keyword, isKeyword := reservedKeywords[varName]; isKeyword {
+				// A reserved literal (true/false) is emitted as its constant Token
+				// so it lexes as e.g. boolToken instead of being resolved as a
+				// scope variable. Builtins are checked first and win a name clash.
+				rpnBuilder.handleToken(keyword.Clone())
+				i = consumeSpaces(expr, i, &parsingCtx)
+				continue
+			}
+
 			rpnBuilder.handleToken(varToken([]string{varName}))
 
 			parser := reservedWordParsers[varName]

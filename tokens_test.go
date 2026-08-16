@@ -2,6 +2,36 @@ package gparse
 
 import "testing"
 
+func TestBooleanLiteralsLexAsBoolToken(t *testing.T) {
+	tests := map[string]struct {
+		expr     string
+		expected boolToken
+	}{
+		"true lexes as boolToken":  {expr: "true", expected: boolToken(true)},
+		"false lexes as boolToken": {expr: "false", expected: boolToken(false)},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			rpn, err := parse(test.expr, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(rpn) != 1 {
+				t.Fatalf("expected a single token, got %d: %v", len(rpn), rpn)
+			}
+
+			got, ok := rpn[0].(boolToken)
+			if !ok {
+				t.Fatalf("expected boolToken, got %T (%v)", rpn[0], rpn[0])
+			}
+			if got != test.expected {
+				t.Errorf("expected %v, got %v", test.expected, got)
+			}
+		})
+	}
+}
+
 func TestVarTokenResolveScopeChain(t *testing.T) {
 	tests := map[string]struct {
 		vars     mapToken
