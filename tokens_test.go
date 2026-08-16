@@ -41,7 +41,7 @@ func TestVarTokenResolveScopeChain(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := test.variable.Resolve(test.vars)
+			got := test.variable.Resolve(test.vars, nil)
 			if got != test.expected {
 				t.Errorf("expected %v, got %v", test.expected, got)
 			}

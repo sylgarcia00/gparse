@@ -1,9 +1,7 @@
 package gparse
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
@@ -144,8 +142,10 @@ func (r refToken) Resolve(localScope map[string]Token) Token {
 	// Local variables have no map of origin,
 	// thus, require a localScope to be resolved:
 	if r.origin == nil && localScope != nil {
-		// Get the most recent value from the local scope:
-		refValue := r.key.Resolve(localScope)
+		// Get the most recent value from the local scope. A local ref resolves
+		// purely against the function-local scope; the host Scope is not
+		// consulted here (nil).
+		refValue := r.key.Resolve(localScope, nil)
 		if refValue != nil {
 			// TODO(vingarcia): Consider cloning this value first
 			return refValue
@@ -194,9 +194,12 @@ func (v varToken) String() string {
 	return out
 }
 
-// resolveInScopeChain looks up key in vars, following the "$parent"
-// link to enclosing scopes on a miss. Returns nil if not found in any scope.
-func resolveInScopeChain(vars map[string]Token, key string) Token {
+// resolveInScopeChain looks up key in vars, following the "$parent" link to
+// enclosing scopes on a miss. When the chain is exhausted it falls back to the
+// source-agnostic scope, so top-level names bound by the host (e.g. a JSON
+// payload) resolve after any function-local variables that shadow them.
+// Returns nil if not found in any scope.
+func resolveInScopeChain(vars map[string]Token, scope Scope, key string) Token {
 	for vars != nil {
 		if value, ok := vars[key]; ok {
 			return value
@@ -204,29 +207,37 @@ func resolveInScopeChain(vars map[string]Token, key string) Token {
 
 		parent, ok := vars["$parent"].(mapToken)
 		if !ok {
-			return nil
+			break
 		}
 		vars = parent
 	}
+
+	if scope != nil {
+		if value, ok := scope.Get(key); ok {
+			return value
+		}
+	}
+
 	return nil
 }
 
-func (v varToken) Resolve(vars map[string]Token) Token {
+func (v varToken) Resolve(vars map[string]Token, scope Scope) Token {
 	// The first identifier climbs the scope chain via "$parent"
 	// (see mapToken.getChildMap), mirroring cparse's parent-scope
-	// resolution. Nested field access below stays within one map.
-	value := resolveInScopeChain(vars, v[0])
+	// resolution, then falls back to the host scope. Nested field access
+	// below stays within resolved Indexable containers.
+	value := resolveInScopeChain(vars, scope, v[0])
 	if lazy, ok := value.(Resolver); ok {
 		value = lazy.Resolve()
 	}
 
 	for _, str := range v[1:] {
-		m, ok := value.(mapToken)
+		m, ok := value.(Indexable)
 		if !ok {
 			return strToken(v.String())
 		}
 
-		value = m[str]
+		value, _ = m.Get(str)
 		if lazy, ok := value.(Resolver); ok {
 			value = lazy.Resolve()
 		}
@@ -237,124 +248,4 @@ func (v varToken) Resolve(vars map[string]Token) Token {
 	}
 
 	return value
-}
-
-// lazyJsonToken will unmarshal from
-// JSON in a lazy way, i.e. it will keep
-// most of the json as a json.RawMessage
-// and only unmarshal further if/when required.
-type lazyJsonToken struct {
-	value Token
-	json  json.RawMessage
-}
-
-var _ Resolver = lazyJsonToken{}
-
-// NewLazyJsonMap will parse the map in an lazy way so we don't
-// unmarshal anything we don't need to at first
-// It also validates the input JSON so we don't need to handle
-// issues with invalid JSON later on
-func NewLazyJsonMap(b []byte) (mapToken, error) {
-	var m map[string]json.RawMessage
-	err := json.Unmarshal(b, &m)
-	if err != nil {
-		return mapToken{}, ParserErr("bad input json received", map[string]any{
-			"invalidJson": string(b),
-			"error":       err.Error(),
-		})
-	}
-
-	token := mapToken{}
-	for k, v := range m {
-		token[k] = lazyJsonToken{
-			json: v,
-		}
-	}
-
-	return token, nil
-}
-
-func (l lazyJsonToken) Clone() Token {
-	return l
-}
-
-func (l lazyJsonToken) String() string {
-	if l.value != nil {
-		return l.value.String()
-	}
-	return string(l.json)
-}
-
-func (l lazyJsonToken) Resolve() Token {
-	if l.value == nil {
-		var err error
-		l.value, err = unmarshalLazyValue(l.json)
-		if err != nil {
-			panic(fmt.Sprintf(
-				`invalid JSON received for lazyJsonToken, this should have been validated before calling Evaluate!: %s`,
-				err,
-			))
-		}
-	}
-
-	return l.value
-}
-
-func unmarshalLazyValue(rawJSON []byte) (Token, error) {
-	rawJSON = bytes.TrimSpace(rawJSON)
-	switch rawJSON[0] {
-	case
-		byte('-'), // JSON numbers may carry a leading minus (leading '+' is not valid JSON)
-		byte('0'), byte('1'), byte('2'), byte('3'), byte('4'),
-		byte('5'), byte('6'), byte('7'), byte('8'), byte('9'):
-
-		var f float64
-		err := json.Unmarshal(rawJSON, &f)
-		return floatToken(f), err
-
-	case byte('"'):
-		var s string
-		err := json.Unmarshal(rawJSON, &s)
-		return strToken(s), err
-
-	case byte('f'), byte('t'):
-		var b bool
-		err := json.Unmarshal(rawJSON, &b)
-		return boolToken(b), err
-
-	case byte('{'):
-		var m map[string]json.RawMessage
-		err := json.Unmarshal(rawJSON, &m)
-		if err != nil {
-			return nil, err
-		}
-
-		token := mapToken{}
-		for k, v := range m {
-			token[k] = lazyJsonToken{
-				json: v,
-			}
-		}
-		return token, nil
-
-	case byte('['):
-		var l []json.RawMessage
-		err := json.Unmarshal(rawJSON, &l)
-		if err != nil {
-			return nil, err
-		}
-
-		token := listToken{}
-		for _, v := range l {
-			token = append(token, lazyJsonToken{
-				json: v,
-			})
-		}
-		return token, nil
-
-	default:
-		return nil, InternalErr("unrecognized JSON value received on unmarshalLazyValue", map[string]any{
-			"value": string(rawJSON),
-		})
-	}
 }

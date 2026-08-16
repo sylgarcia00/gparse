@@ -73,6 +73,17 @@ among many — it is the only door.
    func (rpn BoolExpr) Evaluate(scope Scope) (bool, error)   // thin wrapper: Eval + bool-assert
    ```
 
+### Slice-3 note: narrow scalar-boxing seam is exported
+
+Extracting `jsonscope` into a *separate package* means it can no longer name the
+core's unexported scalar token types. Slice 3 therefore exports a minimal boxing
+seam — `NewString`, `NewFloat`, `NewBool` — plus two container interfaces
+(`Indexable`, `Sequence`) so any host container is indexed through an interface
+rather than a concrete `mapToken`/`listToken` assert. This is a deliberate,
+narrow reversal of Part 2's "token constructors stay internal" deferral (which
+was about the custom-func *registry* surface, not a Scope binding in another
+package). Kept as small as possible: no `NewInt` until a caller needs it.
+
 ### Back-compat
 
 Pre-1.0, no external users → breaking changes are fine. Keep the old

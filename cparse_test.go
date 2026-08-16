@@ -68,7 +68,7 @@ func TestParse(t *testing.T) {
 			rawJSON, err := json.Marshal(test.vars)
 			assertNoErr(t, err)
 
-			result, err := expr.Evaluate(rawJSON)
+			result, err := expr.Evaluate(jsonScope(t, rawJSON))
 			if test.expectErrToContain != nil {
 				assertErrContains(t, err, test.expectErrToContain...)
 				return

@@ -158,7 +158,7 @@ func TestBuiltinsThroughParse(t *testing.T) {
 			expr, err := Parse(test.expr)
 			assertNoErr(t, err)
 
-			result, err := expr.Evaluate(test.payload)
+			result, err := expr.Evaluate(jsonScope(t, test.payload))
 			assertNoErr(t, err)
 
 			if result != test.expectedResult {
@@ -176,7 +176,7 @@ func TestBuiltinNameShadowsPayloadField(t *testing.T) {
 	expr, err := Parse(`len == 5`)
 	assertNoErr(t, err)
 
-	_, err = expr.Evaluate(json.RawMessage(`{"len":5}`))
+	_, err = expr.Evaluate(jsonScope(t, json.RawMessage(`{"len":5}`)))
 	if err == nil {
 		t.Fatalf("expected an error: a built-in name must not resolve to a payload field")
 	}
@@ -189,7 +189,7 @@ func TestBuiltinLenNonSizableThroughParse(t *testing.T) {
 	expr, err := Parse(`len(5) == 1`)
 	assertNoErr(t, err)
 
-	_, err = expr.Evaluate(json.RawMessage("{}"))
+	_, err = expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
 	assertErrContains(t, err, "not sizable")
 }
 

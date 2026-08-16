@@ -1,7 +1,6 @@
 package gparse
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"unicode"
@@ -13,15 +12,28 @@ func Parse(strExpr string) (_ BoolExpr, err error) {
 	return BoolExpr(rpn), err
 }
 
+// Expr is a compiled expression that evaluates over a source-agnostic Scope and
+// returns the resulting Token. It is the core language surface: enforcing a
+// particular result type (e.g. bool) is the host DSL's decision, layered on top
+// via a wrapper like BoolExpr.
+type Expr []Token
+
+// Eval evaluates the expression against scope and returns the resulting Token.
+// The core never learns where the scope's values came from — a host binds them
+// from a Go map (MapScope), JSON (jsonscope), or any other source.
+func (rpn Expr) Eval(scope Scope) (Token, error) {
+	return evaluate(rpn, scope)
+}
+
+// BoolExpr is the thin bool-enforcing wrapper over Expr: it evaluates the
+// expression and asserts the result is a boolean, which is what a filter
+// predicate needs.
 type BoolExpr []Token
 
-func (rpn BoolExpr) Evaluate(logLine json.RawMessage) (bool, error) {
-	m, err := NewLazyJsonMap(logLine)
-	if err != nil {
-		return false, err
-	}
-
-	token, err := evaluate(rpn, m)
+// Evaluate evaluates the expression against scope and asserts a boolean result.
+// Bind a JSON payload with jsonscope.New, or any map with gparse.MapScope.
+func (rpn BoolExpr) Evaluate(scope Scope) (bool, error) {
+	token, err := Expr(rpn).Eval(scope)
 	if err != nil {
 		return false, err
 	}
@@ -328,17 +340,23 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 // operator and custom operator functions, which
 // allows the operators to take advantage of this info
 type EvaluationData struct {
+	// Vars holds function-local variable scopes ($parent-chained maps built by
+	// getChildMap/execFunc). Top-level names not found here fall back to Scope.
 	Vars mapToken
+
+	// Scope is the source-agnostic top-level binding the expression evaluates
+	// over; it is consulted after the local Vars chain is exhausted.
+	Scope Scope
 
 	LeftRef  refToken
 	RightRef refToken
 }
 
 // evaluate will copy the input rpn and then process it until it gets a resulting response
-func evaluate(originalRpn []Token, vars map[string]Token) (_ Token, err error) {
+func evaluate(originalRpn []Token, scope Scope) (_ Token, err error) {
 	var left, right Token
 	data := EvaluationData{
-		Vars: vars,
+		Scope: scope,
 	}
 
 	rpn := copyRPN(originalRpn)
@@ -351,7 +369,7 @@ func evaluate(originalRpn []Token, vars map[string]Token) (_ Token, err error) {
 		op, isOperator := token.(opToken)
 		if !isOperator {
 			if v, isVar := token.(varToken); isVar {
-				token = v.Resolve(data.Vars)
+				token = v.Resolve(data.Vars, data.Scope)
 			}
 
 			evalStack = append(evalStack, token)

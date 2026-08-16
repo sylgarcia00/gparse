@@ -4,6 +4,27 @@ import (
 	"strings"
 )
 
+// Indexable is a map-like container the evaluator can index by string key.
+//
+// Any Token implementing it is treated as a map by the indexing operator and by
+// nested variable field access, so a host can supply its own (possibly lazy)
+// container from any source without the core knowing its concrete type. Get
+// reports (nil, false) when the key is absent.
+type Indexable interface {
+	Token
+	Get(key string) (Token, bool)
+}
+
+// Sequence is a list-like container the evaluator can index by integer
+// position. Any Token implementing it is treated as a list by the indexing
+// operator, letting a host supply its own (possibly lazy) sequence from any
+// source. At is only called with an index already normalized into [0, Len()).
+type Sequence interface {
+	Token
+	Len() int
+	At(i int) Token
+}
+
 // listToken represents a list data type
 type listToken []Token
 
@@ -15,6 +36,16 @@ func NewListToken(args []Token, scope mapToken) (Token, error) {
 
 func (t listToken) Clone() Token {
 	return t
+}
+
+// Len implements Sequence.
+func (t listToken) Len() int {
+	return len(t)
+}
+
+// At implements Sequence.
+func (t listToken) At(i int) Token {
+	return t[i]
 }
 
 // TODO(vingarcia): Consider how to handle an infinite loop
@@ -67,6 +98,12 @@ func (t mapToken) String() string {
 		kvPairs = append(kvPairs, k+":"+v.String())
 	}
 	return "{" + strings.Join(kvPairs, ",") + "}"
+}
+
+// Get implements Indexable.
+func (m mapToken) Get(key string) (Token, bool) {
+	t, ok := m[key]
+	return t, ok
 }
 
 func (m mapToken) getChildMap() mapToken {

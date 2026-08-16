@@ -41,6 +41,57 @@ func TestMapScopeGet(t *testing.T) {
 	}
 }
 
+// TestEvalThroughMapScope is the core decoupling proof: an expression must
+// evaluate against a non-JSON Scope (a plain MapScope, including nested map and
+// list containers) through the same Eval/Evaluate path used for JSON.
+func TestEvalThroughMapScope(t *testing.T) {
+	scope := MapScope{
+		"n":    intToken(7),
+		"name": strToken("vini"),
+		"user": mapToken{"email": strToken("a@b.com")},
+		"tags": listToken{strToken("a"), strToken("b"), strToken("c")},
+	}
+
+	tests := []struct {
+		expr string
+		want bool
+	}{
+		{expr: `n == 7`, want: true},
+		{expr: `n > 10`, want: false},
+		{expr: `name == "vini"`, want: true},
+		{expr: `user.email == "a@b.com"`, want: true},
+		{expr: `tags[1] == "b"`, want: true},
+		{expr: `user.email == user.phone`, want: false}, // present != absent(None)
+		{expr: `user.phone == user.other`, want: true},  // None == None (both absent)
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr)
+			assertNoErr(t, err)
+
+			got, err := expr.Evaluate(scope)
+			assertNoErr(t, err)
+			if got != test.want {
+				t.Fatalf("Evaluate(%q) = %v, want %v", test.expr, got, test.want)
+			}
+		})
+	}
+}
+
+// TestExprEvalReturnsToken checks the core Expr.Eval returns the raw Token
+// (not bool-coerced), so a host can build result types other than bool on it.
+func TestExprEvalReturnsToken(t *testing.T) {
+	boolExpr, err := Parse(`n + 1`)
+	assertNoErr(t, err)
+
+	got, err := Expr(boolExpr).Eval(MapScope{"n": intToken(41)})
+	assertNoErr(t, err)
+	if got.String() != "42" {
+		t.Fatalf("Eval returned %q, want %q", got.String(), "42")
+	}
+}
+
 func TestNilMapScopeGet(t *testing.T) {
 	// A nil MapScope must behave as an empty scope, never panic.
 	var scope MapScope

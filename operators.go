@@ -491,19 +491,22 @@ func colonOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error
 // non-map left operand is an unsupported-types error (unlike "[]", a "." never
 // makes sense on a string or list index here).
 func indexOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error) {
-	// Maps are keyed by string; sequences are indexed by integer.
-	if container, ok := t1.(mapToken); ok {
+	// Maps are keyed by string; sequences are indexed by integer. Both are
+	// matched through the Indexable/Sequence interfaces so a host container
+	// (e.g. a jsonscope object/array) is indexed without the core naming its
+	// concrete type.
+	if container, ok := t1.(Indexable); ok {
 		key, ok := asStr(t2)
 		if !ok {
 			return nil, unsupportedTypesErr(op, t1, t2)
 		}
-		value, found := container[key]
+		value, found := container.Get(key)
 		if !found {
 			return noneToken{}, nil
 		}
-		// Values read from JSON input are stored lazily; unwrap so downstream
-		// operators (and chained access like a.b.c) see the concrete token,
-		// matching varToken.Resolve which also unwraps lazyJsonToken.
+		// Values read from a lazy source are stored unresolved; unwrap so
+		// downstream operators (and chained access like a.b.c) see the concrete
+		// token, matching varToken.Resolve which also unwraps through Resolver.
 		if lazy, ok := value.(Resolver); ok {
 			value = lazy.Resolve()
 		}
@@ -515,22 +518,27 @@ func indexOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, error
 		return nil, unsupportedTypesErr(op, t1, t2)
 	}
 
-	switch container := t1.(type) {
-	case strToken:
-		i, err := resolveIndex(idx, len(container), op, t1, t2)
+	if s, ok := t1.(strToken); ok {
+		i, err := resolveIndex(idx, len(s), op, t1, t2)
 		if err != nil {
 			return nil, err
 		}
-		return strToken(container[i]), nil
-	case listToken:
-		i, err := resolveIndex(idx, len(container), op, t1, t2)
-		if err != nil {
-			return nil, err
-		}
-		return container[i], nil
-	default:
-		return nil, unsupportedTypesErr(op, t1, t2)
+		return strToken(s[i]), nil
 	}
+
+	if seq, ok := t1.(Sequence); ok {
+		i, err := resolveIndex(idx, seq.Len(), op, t1, t2)
+		if err != nil {
+			return nil, err
+		}
+		value := seq.At(i)
+		if lazy, ok := value.(Resolver); ok {
+			value = lazy.Resolve()
+		}
+		return value, nil
+	}
+
+	return nil, unsupportedTypesErr(op, t1, t2)
 }
 
 // resolveIndex normalizes a possibly-negative index against a container of the
