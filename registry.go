@@ -10,6 +10,12 @@ type registry struct {
 	prec     map[string]int
 	builtins map[string]Function
 
+	// builtinsCopied tracks whether builtins is a copy this registry owns.
+	// defaultRegistry aliases the package-level builtinFunctions map by
+	// reference; the first option that registers a builtin copies it (see
+	// registry.copyBuiltins) so custom entries never leak into the globals.
+	builtinsCopied bool
+
 	// opRunes is the set of runes that may appear in an operator symbol,
 	// derived from ops. The lexer uses it to tell operator characters apart
 	// from other characters. It is derived here (rather than from a separate

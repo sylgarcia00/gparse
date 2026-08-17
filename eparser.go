@@ -6,8 +6,19 @@ import (
 	"unicode"
 )
 
-func Parse(strExpr string) (_ BoolExpr, err error) {
+// Parse compiles strExpr into a BoolExpr. Options overlay per-call custom
+// entries (e.g. WithBuiltin) onto a registry seeded from the package defaults;
+// with no options it uses the defaults, preserving the original behavior for
+// existing callers. An option that fails (e.g. a name collision) surfaces its
+// error here and no expression is returned.
+func Parse(strExpr string, opts ...Option) (_ BoolExpr, err error) {
 	reg := defaultRegistry()
+	for _, opt := range opts {
+		if err := opt(reg); err != nil {
+			return BoolExpr{}, err
+		}
+	}
+
 	rpn, err := parse(strExpr, nil, reg)
 
 	return BoolExpr{expr: Expr{rpn: rpn, reg: reg}}, err
