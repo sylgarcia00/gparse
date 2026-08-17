@@ -78,7 +78,7 @@ func TestWithOperator(t *testing.T) {
 		// ~= uses the novel rune '~', absent from every built-in operator. It
 		// can only lex if opRunes is derived per registry (divergence #2): this
 		// asserts both the lexing and the evaluation.
-		expr, err := Parse("a ~= b", WithOperator("~=", 10, approxEqual))
+		expr, err := Parse("a ~= b", WithOperator("~=", Level(10), approxEqual))
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{"a": floatToken(1.2), "b": floatToken(1.0)})
@@ -97,7 +97,7 @@ func TestWithOperator(t *testing.T) {
 	t.Run("precedence is honored relative to built-in operators", func(t *testing.T) {
 		// plus binds tighter (prec 6) than ~= (prec 10), so a ~= b + c groups as
 		// a ~= (b + c): 3 ~= (1 + 2) -> 3 ~= 3 -> true.
-		expr, err := Parse("a ~= b + c", WithOperator("~=", 10, approxEqual))
+		expr, err := Parse("a ~= b + c", WithOperator("~=", Level(10), approxEqual))
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{
@@ -109,8 +109,28 @@ func TestWithOperator(t *testing.T) {
 		}
 	})
 
+	t.Run("SamePrecAs borrows an existing symbol's precedence", func(t *testing.T) {
+		// SamePrecAs("==") resolves to prec 10, so ~= binds looser than + (prec
+		// 6): a ~= b + c groups as a ~= (b + c), 3 ~= (1 + 2) -> 3 ~= 3 -> true.
+		expr, err := Parse("a ~= b + c", WithOperator("~=", SamePrecAs("=="), approxEqual))
+		assertNoErr(t, err)
+
+		result, err := expr.Evaluate(MapScope{
+			"a": floatToken(3.0), "b": floatToken(1.0), "c": floatToken(2.0),
+		})
+		assertNoErr(t, err)
+		if !result {
+			t.Fatalf("expected 3 ~= (1 + 2) to be true")
+		}
+	})
+
+	t.Run("SamePrecAs referencing an unknown symbol is rejected", func(t *testing.T) {
+		_, err := Parse("a ~= b", WithOperator("~=", SamePrecAs("<nope>"), approxEqual))
+		assertErrContains(t, err, "SamePrecAs references an unknown symbol", "<nope>")
+	})
+
 	t.Run("collision with an existing operator surfaces an error from Parse", func(t *testing.T) {
-		_, err := Parse("a == b", WithOperator("==", 10, approxEqual))
+		_, err := Parse("a == b", WithOperator("==", Level(10), approxEqual))
 		assertErrContains(t, err, "operator already registered", "==")
 	})
 
@@ -118,20 +138,20 @@ func TestWithOperator(t *testing.T) {
 		// "=" has a precedence entry but no operators entry, so a check keyed on
 		// operators alone would silently overwrite its precedence. Keying on the
 		// precedence map catches it.
-		_, err := Parse("a", WithOperator("=", 10, approxEqual))
+		_, err := Parse("a", WithOperator("=", Level(10), approxEqual))
 		assertErrContains(t, err, "operator already registered", "=")
 	})
 
 	t.Run("an invalid symbol character is rejected", func(t *testing.T) {
-		_, err := Parse("a", WithOperator("a=", 10, approxEqual))
+		_, err := Parse("a", WithOperator("a=", Level(10), approxEqual))
 		assertErrContains(t, err, "invalid character", "a=")
 
-		_, err = Parse("a", WithOperator("", 10, approxEqual))
+		_, err = Parse("a", WithOperator("", Level(10), approxEqual))
 		assertErrContains(t, err, "operator symbol is empty")
 	})
 
 	t.Run("a registered operator does not leak into a later default Parse", func(t *testing.T) {
-		withOpt, err := Parse("a ~= b", WithOperator("~=", 10, approxEqual))
+		withOpt, err := Parse("a ~= b", WithOperator("~=", Level(10), approxEqual))
 		assertNoErr(t, err)
 		got, err := withOpt.Evaluate(MapScope{"a": floatToken(1.0), "b": floatToken(1.0)})
 		assertNoErr(t, err)
@@ -145,6 +165,77 @@ func TestWithOperator(t *testing.T) {
 		// parse because '~=' is an unknown operator.
 		if _, err = Parse("a ~= b"); err == nil {
 			t.Fatalf("custom operator leaked into a default Parse")
+		}
+	})
+}
+
+func TestWithLeftUnary(t *testing.T) {
+	// negate: unary minus over an int operand. Used to prove a custom prefix
+	// operator both lexes and evaluates end-to-end. The '¬' rune is novel — no
+	// built-in operator uses it — so it lexes only via the opRunes overlay.
+	negate := func(a any) (any, error) {
+		n, ok := a.(int)
+		if !ok {
+			return nil, RuntimeErr("¬ needs an int", nil)
+		}
+		return -n, nil
+	}
+
+	t.Run("a novel-rune prefix operator lexes and evaluates end-to-end", func(t *testing.T) {
+		expr, err := Parse("¬a == b", WithLeftUnary("¬", negate))
+		assertNoErr(t, err)
+
+		result, err := expr.Evaluate(MapScope{"a": intToken(5), "b": intToken(-5)})
+		assertNoErr(t, err)
+		if !result {
+			t.Fatalf("expected ¬5 == -5 to be true")
+		}
+	})
+
+	t.Run("prefix binds tighter than the binary operator it precedes", func(t *testing.T) {
+		// ¬ has prec 3, tighter than + (prec 6), so ¬a + b groups as (¬a) + b:
+		// (¬5) + 2 -> -3.
+		expr, err := Parse("¬a + b == c", WithLeftUnary("¬", negate))
+		assertNoErr(t, err)
+
+		result, err := expr.Evaluate(MapScope{
+			"a": intToken(5), "b": intToken(2), "c": intToken(-3),
+		})
+		assertNoErr(t, err)
+		if !result {
+			t.Fatalf("expected (¬5) + 2 == -3 to be true")
+		}
+	})
+
+	t.Run("collision with a built-in unary operator surfaces an error from Parse", func(t *testing.T) {
+		// "!" is the built-in left-unary logical negation, keyed under "L!".
+		_, err := Parse("!a", WithLeftUnary("!", negate))
+		assertErrContains(t, err, "unary operator already registered", "!")
+	})
+
+	t.Run("an invalid symbol character is rejected", func(t *testing.T) {
+		_, err := Parse("a", WithLeftUnary("a¬", negate))
+		assertErrContains(t, err, "invalid character", "a¬")
+
+		_, err = Parse("a", WithLeftUnary("", negate))
+		assertErrContains(t, err, "operator symbol is empty")
+	})
+
+	t.Run("a registered prefix operator does not leak into a later default Parse", func(t *testing.T) {
+		withOpt, err := Parse("¬a == b", WithLeftUnary("¬", negate))
+		assertNoErr(t, err)
+		got, err := withOpt.Evaluate(MapScope{"a": intToken(1), "b": intToken(-1)})
+		assertNoErr(t, err)
+		if !got {
+			t.Fatalf("expected ¬1 == -1 to evaluate true when registered")
+		}
+
+		// A plain Parse with no options must NOT see the custom prefix operator
+		// nor its novel rune: if the option had mutated the shared globals (ops,
+		// prec or opRunes), `¬a` would lex and evaluate; instead it must fail to
+		// parse because '¬' is an unknown operator.
+		if _, err = Parse("¬a == b"); err == nil {
+			t.Fatalf("custom prefix operator leaked into a default Parse")
 		}
 	})
 }
