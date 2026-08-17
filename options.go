@@ -181,16 +181,8 @@ func WithLeftUnary(sym string, fn func(a any) (any, error)) Option {
 		// RPN builder checks to dispatch it as a prefix (see handleOp). Reject if
 		// either key is taken so a collision fails loudly instead of silently
 		// overwriting a built-in's precedence.
-		unaryKey := "L" + sym
-		if _, exists := reg.prec[unaryKey]; exists {
-			return ParserErr("unary operator already registered", map[string]any{
-				"symbol": sym,
-			})
-		}
-		if _, exists := reg.prec[sym]; exists {
-			return ParserErr("operator already registered", map[string]any{
-				"symbol": sym,
-			})
+		if err := validateUnarySymbol(reg, sym, "L"); err != nil {
+			return err
 		}
 
 		reg.copyOps()
@@ -200,10 +192,86 @@ func WithLeftUnary(sym string, fn func(a any) (any, error)) Option {
 		// RPN op token is emitted, so eval resolves ops[sym].
 		reg.ops[opToken(sym)] = wrapLeftUnary(sym, fn)
 		reg.prec[sym] = leftUnaryPrec
-		reg.prec[unaryKey] = leftUnaryPrec
+		reg.prec["L"+sym] = leftUnaryPrec
 		registerOpRunes(reg, sym)
 		return nil
 	}
+}
+
+// WithRightUnary registers a right-unary (postfix) operator symbol callable
+// inside expressions, e.g. WithRightUnary("!", factorial) enables a!. fn takes
+// the single operand as a native Go value (int/float/string/bool/[]any/
+// map[string]any/nil) and returns one; gparse boxes/unboxes across the token
+// boundary (see box and unbox).
+//
+// Per the rpn_builder convention, a right-unary operator is keyed under "R"+sym
+// in the precedence table, while its Operator is keyed under the bare sym in
+// ops. The RPN builder dispatches a symbol as postfix only when it follows an
+// operand (handleOp's else-if branch), pushing "R"+sym; normalizeOp strips the
+// "R" prefix before dispatch, and handleRightUnary places the operand as the
+// left token with a unaryPlaceholderToken on the right (mirror of the prefix
+// case). The novel-rune, copy-on-write and validation discipline mirrors
+// WithLeftUnary.
+//
+// A symbol may not be registered as both left- and right-unary: the two roles
+// share the bare-sym precedence entry the lexer keys on, and handleOp resolves
+// prefix vs postfix purely by position, so a dual registration would give one
+// role an incoherent precedence. Registering a symbol whose "R"+sym key (or its
+// reciprocal "L"+sym / bare-sym binary key) collides with an existing operator
+// is an error, surfaced from Parse.
+func WithRightUnary(sym string, fn func(a any) (any, error)) Option {
+	return func(reg *registry) error {
+		if err := validateOpSymbol(sym); err != nil {
+			return err
+		}
+
+		if err := validateUnarySymbol(reg, sym, "R"); err != nil {
+			return err
+		}
+
+		reg.copyOps()
+		reg.copyPrec()
+		// The Operator is keyed under the bare sym: handleRightUnary pushes
+		// "R"+sym onto the op stack, and normalizeOp strips the "R" before the
+		// RPN op token is emitted, so eval resolves ops[sym].
+		reg.ops[opToken(sym)] = wrapRightUnary(sym, fn)
+		reg.prec[sym] = rightUnaryPrec
+		reg.prec["R"+sym] = rightUnaryPrec
+		registerOpRunes(reg, sym)
+		return nil
+	}
+}
+
+// validateUnarySymbol rejects a unary operator registration whose keys collide
+// with an existing operator. dir is "L" for prefix or "R" for postfix; the
+// check guards three keys: the primary "dir"+sym (this role), the reciprocal
+// unary key (the opposite role — a symbol may not be both prefix and postfix,
+// since the two share the bare-sym precedence the lexer keys on and handleOp
+// picks the role by position), and the bare sym (a binary operator of the same
+// name). Any collision fails loudly instead of silently overwriting precedence.
+func validateUnarySymbol(reg *registry, sym string, dir string) error {
+	if _, exists := reg.prec[dir+sym]; exists {
+		return ParserErr("unary operator already registered", map[string]any{
+			"symbol": sym,
+		})
+	}
+
+	reciprocal := "L"
+	if dir == "L" {
+		reciprocal = "R"
+	}
+	if _, exists := reg.prec[reciprocal+sym]; exists {
+		return ParserErr("symbol already registered as the opposite unary", map[string]any{
+			"symbol": sym,
+		})
+	}
+
+	if _, exists := reg.prec[sym]; exists {
+		return ParserErr("operator already registered", map[string]any{
+			"symbol": sym,
+		})
+	}
+	return nil
 }
 
 // leftUnaryPrec is the precedence shared by every custom left-unary operator,
@@ -213,9 +281,16 @@ func WithLeftUnary(sym string, fn func(a any) (any, error)) Option {
 // prefix to bind looser than its operand, which prefix semantics never want.
 const leftUnaryPrec = 3
 
+// rightUnaryPrec is the precedence shared by every custom right-unary operator.
+// Postfix operators bind tighter than prefix ones in C-family precedence (the
+// built-in postfix (), [] and . sit at level 2, tighter than the prefix unaries
+// at 3), so a! parses as (a)! and -a! as -(a!). A single fixed level suffices
+// for the same reason it does for prefix operators.
+const rightUnaryPrec = 2
+
 // validateOpSymbol reports whether sym is a usable custom operator symbol: it
 // must be non-empty and every rune must be a legal operator character (see
-// isValidOpRune). Shared by WithOperator and WithLeftUnary.
+// isValidOpRune). Shared by WithOperator, WithLeftUnary and WithRightUnary.
 func validateOpSymbol(sym string) error {
 	if sym == "" {
 		return ParserErr("operator symbol is empty", nil)
@@ -294,6 +369,30 @@ func wrapOperator(sym string, fn func(a, b any) (any, error)) Operator {
 func wrapLeftUnary(sym string, fn func(a any) (any, error)) Operator {
 	return func(left Token, right Token, op opToken, data *EvaluationData) (Token, error) {
 		result, err := fn(unbox(right))
+		if err != nil {
+			return nil, err
+		}
+
+		token, err := box(result)
+		if err != nil {
+			return nil, RuntimeErr("operator returned an unsupported value", map[string]any{
+				"operator": sym,
+				"error":    err,
+			})
+		}
+		return token, nil
+	}
+}
+
+// wrapRightUnary adapts a user-facing postfix func(a any) into the internal
+// Operator shape. A right-unary operator is dispatched with its operand as the
+// left token and a unaryPlaceholderToken as the right (see handleRightUnary),
+// the mirror of the prefix case, so only the left operand carries the value: it
+// is unboxed, passed to fn, and the result boxed back into a Token. A box
+// failure on the result names the offending operator so the error is traceable.
+func wrapRightUnary(sym string, fn func(a any) (any, error)) Operator {
+	return func(left Token, right Token, op opToken, data *EvaluationData) (Token, error) {
+		result, err := fn(unbox(left))
 		if err != nil {
 			return nil, err
 		}

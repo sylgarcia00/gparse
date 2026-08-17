@@ -240,6 +240,115 @@ func TestWithLeftUnary(t *testing.T) {
 	})
 }
 
+func TestWithRightUnary(t *testing.T) {
+	// fact: postfix factorial over an int operand. Proves a custom postfix
+	// operator lexes and evaluates end-to-end. The '°' rune is novel — no
+	// built-in operator uses it — so it lexes only via the opRunes overlay.
+	fact := func(a any) (any, error) {
+		n, ok := a.(int)
+		if !ok || n < 0 {
+			return nil, RuntimeErr("° needs a non-negative int", nil)
+		}
+		result := 1
+		for i := 2; i <= n; i++ {
+			result *= i
+		}
+		return result, nil
+	}
+
+	t.Run("a novel-rune postfix operator lexes and evaluates end-to-end", func(t *testing.T) {
+		expr, err := Parse("a° == b", WithRightUnary("°", fact))
+		assertNoErr(t, err)
+
+		result, err := expr.Evaluate(MapScope{"a": intToken(4), "b": intToken(24)})
+		assertNoErr(t, err)
+		if !result {
+			t.Fatalf("expected 4° == 24 to be true")
+		}
+	})
+
+	t.Run("postfix binds tighter than the binary operator it follows", func(t *testing.T) {
+		// ° has prec 2, tighter than + (prec 6), so a + b° groups as a + (b°):
+		// 2 + (3°) -> 2 + 6 -> 8.
+		expr, err := Parse("a + b° == c", WithRightUnary("°", fact))
+		assertNoErr(t, err)
+
+		result, err := expr.Evaluate(MapScope{
+			"a": intToken(2), "b": intToken(3), "c": intToken(8),
+		})
+		assertNoErr(t, err)
+		if !result {
+			t.Fatalf("expected 2 + (3°) == 8 to be true")
+		}
+	})
+
+	t.Run("postfix binds tighter than a prefix operator", func(t *testing.T) {
+		// ° has prec 2, tighter than the built-in prefix minus (prec 3), so -a°
+		// groups as -(a°): -(3°) -> -6.
+		expr, err := Parse("-a° == b", WithRightUnary("°", fact))
+		assertNoErr(t, err)
+
+		result, err := expr.Evaluate(MapScope{"a": intToken(3), "b": intToken(-6)})
+		assertNoErr(t, err)
+		if !result {
+			t.Fatalf("expected -(3°) == -6 to be true")
+		}
+	})
+
+	t.Run("a symbol cannot be both left- and right-unary", func(t *testing.T) {
+		negate := func(a any) (any, error) { return a, nil }
+
+		// Registering ~ as left-unary then attempting right-unary must fail: the
+		// two roles share the bare-sym precedence and handleOp resolves the role
+		// by position, so a dual registration is incoherent.
+		_, err := Parse("a", WithLeftUnary("~", negate), WithRightUnary("~", fact))
+		assertErrContains(t, err, "opposite unary", "~")
+
+		// And the reverse direction: right-unary first, then left-unary.
+		_, err = Parse("a", WithRightUnary("~", fact), WithLeftUnary("~", negate))
+		assertErrContains(t, err, "opposite unary", "~")
+	})
+
+	t.Run("collision with a built-in binary operator surfaces an error from Parse", func(t *testing.T) {
+		// "==" is a built-in binary operator, so it already owns the bare-sym key.
+		_, err := Parse("a", WithRightUnary("==", fact))
+		assertErrContains(t, err, "operator already registered", "==")
+	})
+
+	t.Run("collision with a built-in unary operator surfaces an error from Parse", func(t *testing.T) {
+		// "!" is the built-in left-unary logical negation, keyed under "L!"; its
+		// reciprocal must block a right-unary registration too.
+		_, err := Parse("a", WithRightUnary("!", fact))
+		assertErrContains(t, err, "opposite unary", "!")
+	})
+
+	t.Run("an invalid symbol character is rejected", func(t *testing.T) {
+		_, err := Parse("a", WithRightUnary("a°", fact))
+		assertErrContains(t, err, "invalid character", "a°")
+
+		_, err = Parse("a", WithRightUnary("", fact))
+		assertErrContains(t, err, "operator symbol is empty")
+	})
+
+	t.Run("a registered postfix operator does not leak into a later default Parse", func(t *testing.T) {
+		withOpt, err := Parse("a° == b", WithRightUnary("°", fact))
+		assertNoErr(t, err)
+		got, err := withOpt.Evaluate(MapScope{"a": intToken(3), "b": intToken(6)})
+		assertNoErr(t, err)
+		if !got {
+			t.Fatalf("expected 3° == 6 to evaluate true when registered")
+		}
+
+		// A plain Parse with no options must NOT see the custom postfix operator
+		// nor its novel rune: if the option had mutated the shared globals (ops,
+		// prec or opRunes), `a°` would lex and evaluate; instead it must fail to
+		// parse because '°' is an unknown operator.
+		if _, err = Parse("a° == b"); err == nil {
+			t.Fatalf("custom postfix operator leaked into a default Parse")
+		}
+	})
+}
+
 func TestIsValidOpRune(t *testing.T) {
 	tests := []struct {
 		name string
