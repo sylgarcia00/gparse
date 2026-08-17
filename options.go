@@ -1,5 +1,7 @@
 package gparse
 
+import "unicode"
+
 // Option overlays a per-call custom entry onto the registry a single Parse call
 // resolves against. Options run in order before parsing; returning an error
 // aborts the Parse (see Parse). They never touch the package-level defaults —
@@ -57,6 +59,106 @@ func WithBuiltin(name string, fn func(args ...any) (any, error)) Option {
 		reg.copyBuiltins()
 		reg.builtins[name] = wrapBuiltin(name, fn)
 		return nil
+	}
+}
+
+// WithOperator registers a binary infix operator symbol callable inside
+// expressions, e.g. WithOperator("~=", 10, approxEqual) enables a ~= b. prec is
+// the operator's precedence level (lower binds tighter; see the built-in levels
+// in opPrecedence, e.g. == is 10, + is 6). fn takes both operands as native Go
+// values (int/float/string/bool/[]any/map[string]any/nil) and returns one;
+// gparse boxes/unboxes across the token boundary (see box and unbox).
+//
+// The symbol may use a novel rune (e.g. ~): the rune set the lexer scans
+// against is derived per registry, so registering the operator makes it lex.
+// Every rune of the symbol must be a legal operator character — it may not be a
+// digit, letter, space, or one of the token-starting characters (see
+// opStartingChars) the lexer treats as an operator boundary; otherwise the
+// symbol could never be scanned back out and registration fails.
+//
+// Registering a symbol that collides with an existing operator (a built-in like
+// == or one added by an earlier option) is an error, surfaced from Parse.
+func WithOperator(sym string, prec int, fn func(a, b any) (any, error)) Option {
+	return func(reg *registry) error {
+		if sym == "" {
+			return ParserErr("operator symbol is empty", nil)
+		}
+		for _, c := range sym {
+			if !isValidOpRune(c) {
+				return ParserErr("operator symbol has an invalid character", map[string]any{
+					"symbol": sym,
+					"char":   string(c),
+				})
+			}
+		}
+
+		// Check prec, not ops: every built-in symbol has a precedence entry, but
+		// some (=, (), the L-/L+/L! unaries) are precedence-only with no ops
+		// entry. Keying the collision check on prec — the same map we write to
+		// below — makes any built-in symbol fail loudly instead of silently
+		// overwriting its precedence.
+		op := opToken(sym)
+		if _, exists := reg.prec[sym]; exists {
+			return ParserErr("operator already registered", map[string]any{
+				"symbol": sym,
+			})
+		}
+
+		reg.copyOps()
+		reg.copyPrec()
+		reg.ops[op] = wrapOperator(sym, fn)
+		reg.prec[sym] = prec
+		// opRunes is owned by the registry (see defaultRegistry), so a novel
+		// rune can be added directly; without this the lexer would not scan the
+		// custom symbol back out of the expression.
+		for _, c := range sym {
+			reg.opRunes[c] = true
+		}
+		return nil
+	}
+}
+
+// isValidOpRune reports whether c may appear in a custom operator symbol. It
+// must not be a token character the lexer routes elsewhere (digits, letters,
+// quotes, brackets, whitespace) nor an operator-boundary character
+// (opStartingChars) that would prevent the multi-rune symbol from being scanned
+// as a single operator.
+func isValidOpRune(c rune) bool {
+	if opStartingChars[c] {
+		return false
+	}
+	if unicode.IsLetter(c) || unicode.IsDigit(c) || unicode.IsSpace(c) {
+		return false
+	}
+	// '.' is member access (a built-in operator with special lexer handling in
+	// parseNumber and the '.' case of parse); quotes start string literals.
+	// A custom symbol using either could never be scanned back as one operator.
+	switch c {
+	case '\'', '"', '.':
+		return false
+	}
+	return true
+}
+
+// wrapOperator adapts a user-facing binary func(a, b any) into the internal
+// Operator shape: it unboxes both operand Tokens to native values, calls fn,
+// then boxes the result back into a Token. A box failure on the result names
+// the offending operator so the error is traceable.
+func wrapOperator(sym string, fn func(a, b any) (any, error)) Operator {
+	return func(left Token, right Token, op opToken, data *EvaluationData) (Token, error) {
+		result, err := fn(unbox(left), unbox(right))
+		if err != nil {
+			return nil, err
+		}
+
+		token, err := box(result)
+		if err != nil {
+			return nil, RuntimeErr("operator returned an unsupported value", map[string]any{
+				"operator": sym,
+				"error":    err,
+			})
+		}
+		return token, nil
 	}
 }
 

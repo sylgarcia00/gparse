@@ -6,6 +6,17 @@ import (
 	"unicode"
 )
 
+// opStartingChars are characters that can start a token but must NOT be
+// absorbed into the middle of a multi-rune operator. They serve as ending
+// characters so that expressions such as `10 *-3` don't interpret `*-` as a
+// single operator when it is actually two. A custom operator symbol may not
+// contain any of these (see WithOperator), since the lexer could not scan it.
+var opStartingChars = map[rune]bool{
+	'+': true, '-': true, '\'': true, '"': true,
+	'(': true, ')': true, '[': true, ']': true, '{': true, '}': true,
+	'_': true,
+}
+
 // Parse compiles strExpr into a BoolExpr. Options overlay per-call custom
 // entries (e.g. WithBuiltin) onto a registry seeded from the package defaults;
 // with no options it uses the defaults, preserving the original behavior for
@@ -310,13 +321,6 @@ func parse(strExpr string, vars map[string]Token, reg *registry) (_ []Token, err
 					start := i
 					opRunes := []rune{expr[i]}
 					i++
-					// These ops are here to serve as ending characters so that expressions
-					// such as: `10 *-3` don't interpret *- as a single operator when its actually 2.
-					opStartingChars := map[rune]bool{
-						'+': true, '-': true, '\'': true, '"': true,
-						'(': true, ')': true, '[': true, ']': true, '{': true, '}': true,
-						'_': true,
-					}
 					for i < len(expr) && reg.opRunes[expr[i]] && !opStartingChars[expr[i]] {
 						opRunes = append(opRunes, expr[i])
 						i++
