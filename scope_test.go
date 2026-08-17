@@ -85,7 +85,7 @@ func TestExprEvalReturnsToken(t *testing.T) {
 	boolExpr, err := Parse(`n + 1`)
 	assertNoErr(t, err)
 
-	got, err := Expr(boolExpr).Eval(MapScope{"n": intToken(41)})
+	got, err := boolExpr.expr.Eval(MapScope{"n": intToken(41)})
 	assertNoErr(t, err)
 	if got.String() != "42" {
 		t.Fatalf("Eval returned %q, want %q", got.String(), "42")

@@ -26,13 +26,16 @@ type RPNBuilder struct {
 	// end inside a bracket evaluation just because
 	// found a delimiter like '\n' or ')'
 	bracketLevel int
+
+	// reg supplies the precedence table used by the shunting below.
+	reg *registry
 }
 
 // Find out if op is a binary or unary operator and handle it:
 func (r *RPNBuilder) handleOp(op string) error {
 	// If it's a left unary operator:
 	if r.lastTokenWasOp != "no" {
-		if _, exists := opPrecedence["L"+op]; exists {
+		if _, exists := r.reg.prec["L"+op]; exists {
 			r.handleLeftUnary("L" + op)
 			r.lastTokenWasUnary = true
 			r.lastTokenWasOp = op
@@ -43,7 +46,7 @@ func (r *RPNBuilder) handleOp(op string) error {
 		}
 
 		// If its a right unary operator:
-	} else if _, exists := opPrecedence["R"+op]; exists {
+	} else if _, exists := r.reg.prec["R"+op]; exists {
 		r.handleRightUnary("R" + op)
 
 		// Set it to false, since we have already added
@@ -53,7 +56,7 @@ func (r *RPNBuilder) handleOp(op string) error {
 
 		// If it is a binary operator:
 	} else {
-		if _, exists := opPrecedence[op]; exists {
+		if _, exists := r.reg.prec[op]; exists {
 			r.handleBinaryOp(op)
 		} else {
 			return SyntaxErr("unrecognized binary operator", map[string]any{
@@ -104,7 +107,7 @@ func (r *RPNBuilder) handleOpStack(op string) {
 
 	l := len(r.opStack)
 	for ; l > 0 && !isOpenBracket(r.opStack[l-1]) &&
-		opPrecedence[op] >= opPrecedence[r.opStack[l-1]]; l-- {
+		r.reg.prec[op] >= r.reg.prec[r.opStack[l-1]]; l-- {
 		currentOp = normalizeOp(r.opStack[l-1])
 		r.rpn = append(r.rpn, opToken(currentOp))
 	}

@@ -13,7 +13,7 @@ func TestBooleanLiteralsLexAsBoolToken(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			rpn, err := parse(test.expr, nil)
+			rpn, err := parse(test.expr, nil, defaultRegistry())
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

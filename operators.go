@@ -77,21 +77,6 @@ var operators = map[opToken]Operator{
 	":": colonOp,
 }
 
-// opRunes contains the list of runes used
-// on the currently registered operators so
-// we can differentiate op characters from
-// other types of characters
-var opRunesSet = func() (runes map[rune]bool) {
-	runeSet := map[rune]bool{}
-	for k := range operators {
-		for _, c := range k {
-			runeSet[c] = true
-		}
-	}
-
-	return runeSet
-}()
-
 // asFloat returns the numeric value of a numeral Token (intToken or
 // floatToken) as a float64. The second return is false for any other type.
 func asFloat(t Token) (float64, bool) {

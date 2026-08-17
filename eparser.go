@@ -7,33 +7,42 @@ import (
 )
 
 func Parse(strExpr string) (_ BoolExpr, err error) {
-	rpn, err := parse(strExpr, nil)
+	reg := defaultRegistry()
+	rpn, err := parse(strExpr, nil, reg)
 
-	return BoolExpr(rpn), err
+	return BoolExpr{expr: Expr{rpn: rpn, reg: reg}}, err
 }
 
 // Expr is a compiled expression that evaluates over a source-agnostic Scope and
 // returns the resulting Token. It is the core language surface: enforcing a
 // particular result type (e.g. bool) is the host DSL's decision, layered on top
 // via a wrapper like BoolExpr.
-type Expr []Token
+//
+// It carries the registry it was compiled against so Eval resolves operators
+// and builtins against the same set the parser used.
+type Expr struct {
+	rpn []Token
+	reg *registry
+}
 
 // Eval evaluates the expression against scope and returns the resulting Token.
 // The core never learns where the scope's values came from — a host binds them
 // from a Go map (MapScope), JSON (jsonscope), or any other source.
-func (rpn Expr) Eval(scope Scope) (Token, error) {
-	return evaluate(rpn, scope)
+func (e Expr) Eval(scope Scope) (Token, error) {
+	return evaluate(e.rpn, scope, e.reg)
 }
 
 // BoolExpr is the thin bool-enforcing wrapper over Expr: it evaluates the
 // expression and asserts the result is a boolean, which is what a filter
 // predicate needs.
-type BoolExpr []Token
+type BoolExpr struct {
+	expr Expr
+}
 
 // Evaluate evaluates the expression against scope and asserts a boolean result.
 // Bind a JSON payload with jsonscope.New, or any map with gparse.MapScope.
-func (rpn BoolExpr) Evaluate(scope Scope) (bool, error) {
-	token, err := Expr(rpn).Eval(scope)
+func (b BoolExpr) Evaluate(scope Scope) (bool, error) {
+	token, err := b.expr.Eval(scope)
 	if err != nil {
 		return false, err
 	}
@@ -64,14 +73,14 @@ func (p ParsingCtx) FormatLineCol(i int) string {
 
 // parse will decode the input expression into a Reverse
 // Polish notation for easy future evaluation.
-func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
+func parse(strExpr string, vars map[string]Token, reg *registry) (_ []Token, err error) {
 	if len(strExpr) == 0 {
 		return nil, fmt.Errorf("cannot build an expression from an empty string")
 	}
 
 	expr := []rune(strExpr)
 
-	var rpnBuilder RPNBuilder
+	rpnBuilder := RPNBuilder{reg: reg}
 
 	parsingCtx := ParsingCtx{
 		currentLine:   0,
@@ -96,7 +105,7 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 			var varName string
 			i, varName = parseVar(expr, i)
 
-			if builtin, isBuiltin := builtinFunctions[varName]; isBuiltin {
+			if builtin, isBuiltin := reg.builtins[varName]; isBuiltin {
 				// A registered built-in name (e.g. len, type) becomes a Function
 				// token so a following "(" is dispatched as a call. This lookup
 				// runs first, so built-ins take precedence over reserved words
@@ -297,7 +306,7 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 						'(': true, ')': true, '[': true, ']': true, '{': true, '}': true,
 						'_': true,
 					}
-					for i < len(expr) && opRunesSet[expr[i]] && !opStartingChars[expr[i]] {
+					for i < len(expr) && reg.opRunes[expr[i]] && !opStartingChars[expr[i]] {
 						opRunes = append(opRunes, expr[i])
 						i++
 					}
@@ -314,7 +323,7 @@ func parse(strExpr string, vars map[string]Token) (_ []Token, err error) {
 						if err != nil {
 							return nil, err
 						}
-					} else if _, isKnownOp := opPrecedence[op]; isKnownOp {
+					} else if _, isKnownOp := reg.prec[op]; isKnownOp {
 						rpnBuilder.handleOp(op)
 						// Maybe just the first character is an operator:
 					} else if parser, isReservedWord := reservedWordParsers[op[0:1]]; isReservedWord {
@@ -359,13 +368,16 @@ type EvaluationData struct {
 
 	LeftRef  refToken
 	RightRef refToken
+
+	reg *registry
 }
 
 // evaluate will copy the input rpn and then process it until it gets a resulting response
-func evaluate(originalRpn []Token, scope Scope) (_ Token, err error) {
+func evaluate(originalRpn []Token, scope Scope, reg *registry) (_ Token, err error) {
 	var left, right Token
 	data := EvaluationData{
 		Scope: scope,
+		reg:   reg,
 	}
 
 	rpn := copyRPN(originalRpn)
@@ -458,7 +470,7 @@ func evaluate(originalRpn []Token, scope Scope) (_ Token, err error) {
 }
 
 func findAndRunOperator(op opToken, left Token, right Token, data *EvaluationData) (Token, error) {
-	opFunc := operators[op]
+	opFunc := data.reg.ops[op]
 	if opFunc == nil {
 		return nil, SyntaxErr("unrecognized operator", map[string]any{
 			"op": op,
