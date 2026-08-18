@@ -1,8 +1,11 @@
 # Design proposal — custom-operator registry
 
-Status: **DRAFT for Vini** (flagged CORE). Not implemented. Written by Sylphie
-2026-08-14. Goal: let a caller extend gparse with their own operators /
-builtins / precedence without forking the package.
+Status: **IMPLEMENTED** (Option A shipped, slices 6b–6c-c, 2026-08-17). Written
+by Sylphie 2026-08-14, flagged CORE by Vini. Goal: let a caller extend gparse
+with their own operators / builtins / precedence without forking the package.
+See the *Extending gparse* section of the README for the shipped public API
+(`WithBuiltin`/`WithOperator`/`WithLeftUnary`/`WithRightUnary`/`SamePrecAs`);
+Option B (a reusable `Parser` value) remains a future add-on.
 
 ## Problem
 
