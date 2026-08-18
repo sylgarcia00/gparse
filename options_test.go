@@ -1,6 +1,7 @@
 package gparse
 
 import (
+	"math"
 	"reflect"
 	"testing"
 )
@@ -411,4 +412,44 @@ func TestBoxUnboxRoundTrip(t *testing.T) {
 func TestBoxUnsupportedType(t *testing.T) {
 	_, err := box(struct{ X int }{X: 1})
 	assertErrContains(t, err, "cannot box value into a token")
+}
+
+// box widens every Go integer/float kind a user builtin might return into
+// intToken/floatToken (unbox normalizes back to int/float64, so this is
+// one-directional and not part of the round-trip table above).
+func TestBoxWidensNumericTypes(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		token Token
+	}{
+		{"int8", int8(-5), intToken(-5)},
+		{"int16", int16(-5), intToken(-5)},
+		{"int32", int32(-5), intToken(-5)},
+		{"int64", int64(-5), intToken(-5)},
+		{"uint8", uint8(5), intToken(5)},
+		{"uint16", uint16(5), intToken(5)},
+		{"uint32", uint32(5), intToken(5)},
+		{"uint", uint(5), intToken(5)},
+		{"uint64", uint64(5), intToken(5)},
+		{"float32", float32(2.5), floatToken(2.5)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			token, err := box(test.value)
+			assertNoErr(t, err)
+			if !reflect.DeepEqual(token, test.token) {
+				t.Fatalf("box(%#v) = %#v, want %#v", test.value, token, test.token)
+			}
+		})
+	}
+}
+
+func TestBoxIntegerOverflow(t *testing.T) {
+	overflowing := []any{uint64(math.MaxUint64), ^uint(0)}
+	for _, value := range overflowing {
+		_, err := box(value)
+		assertErrContains(t, err, "overflows gparse's platform int")
+	}
 }

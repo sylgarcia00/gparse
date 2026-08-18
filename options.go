@@ -1,6 +1,9 @@
 package gparse
 
-import "unicode"
+import (
+	"math"
+	"unicode"
+)
 
 // Option overlays a per-call custom entry onto the registry a single Parse call
 // resolves against. Options run in order before parsing; returning an error
@@ -440,13 +443,54 @@ func wrapBuiltin(name string, fn func(args ...any) (any, error)) Function {
 // string, bool, list ([]any), map (map[string]any) and none (nil). An
 // unsupported type is an error rather than a panic, so a misbehaving builtin
 // fails the evaluation instead of crashing the process.
+// intOverflowErr reports an integer that does not fit gparse's platform int
+// (the underlying type of intToken). Boxing it as int would silently wrap, so
+// box errors instead of losing precision.
+func intOverflowErr(value any) error {
+	return RuntimeErr("integer value overflows gparse's platform int", map[string]any{
+		"value": value,
+	})
+}
+
 func box(value any) (Token, error) {
 	switch v := value.(type) {
 	case nil:
 		return noneToken{}, nil
 	case int:
 		return intToken(v), nil
+	case int8:
+		return intToken(v), nil
+	case int16:
+		return intToken(v), nil
+	case int32:
+		return intToken(v), nil
+	case int64:
+		if v > math.MaxInt || v < math.MinInt {
+			return nil, intOverflowErr(value)
+		}
+		return intToken(v), nil
+	case uint8:
+		return intToken(v), nil
+	case uint16:
+		return intToken(v), nil
+	case uint32:
+		if uint64(v) > math.MaxInt {
+			return nil, intOverflowErr(value)
+		}
+		return intToken(v), nil
+	case uint:
+		if uint64(v) > math.MaxInt {
+			return nil, intOverflowErr(value)
+		}
+		return intToken(v), nil
+	case uint64:
+		if v > math.MaxInt {
+			return nil, intOverflowErr(value)
+		}
+		return intToken(v), nil
 	case float64:
+		return floatToken(v), nil
+	case float32:
 		return floatToken(v), nil
 	case string:
 		return strToken(v), nil

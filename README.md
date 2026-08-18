@@ -48,8 +48,11 @@ expr, err := gparse.Parse(`geodist(a, b) < 100 && tag ~= "^v"`,
 ```
 
 Custom functions speak native Go values, not the internal `Token` type —
-gparse boxes/unboxes across the boundary. Supported types are `int`, `float64`,
-`string`, `bool`, `[]any`, `map[string]any`, and `nil` (for `None`):
+gparse boxes/unboxes across the boundary. Supported types are any Go integer
+kind (`int`, `int8`…`int64`, `uint`…`uint64` — boxed as `int`, erroring if the
+value overflows the platform `int`), any float (`float32`/`float64` — boxed as
+`float64`), `string`, `bool`, `[]any`, `map[string]any`, and `nil` (for
+`None`). Values handed back to your function are always `int`/`float64`:
 
 | Option | Signature | Adds |
 | --- | --- | --- |
