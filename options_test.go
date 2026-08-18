@@ -23,6 +23,30 @@ func TestWithBuiltin(t *testing.T) {
 		}
 	})
 
+	t.Run("a zero-argument builtin is callable as f()", func(t *testing.T) {
+		// A custom builtin recognized at parse time (via the registry) lexes as a
+		// Function token, so an empty `f()` routes through the empty-call path and
+		// invokes with no arguments — the same fix that makes len()/[]/{} parse.
+		called := false
+		expr, err := Parse("now()", WithBuiltin("now", func(args ...any) (any, error) {
+			called = true
+			if len(args) != 0 {
+				return nil, ParserErr("expected no arguments", map[string]any{"got": len(args)})
+			}
+			return true, nil
+		}))
+		assertNoErr(t, err)
+
+		got, err := expr.Evaluate(MapScope{})
+		assertNoErr(t, err)
+		if !called {
+			t.Fatalf("the zero-argument builtin was never invoked")
+		}
+		if !got {
+			t.Fatalf("expected now() to evaluate true")
+		}
+	})
+
 	t.Run("collision with an existing builtin surfaces an error from Parse", func(t *testing.T) {
 		_, err := Parse("len(a) == 1", WithBuiltin("len", func(args ...any) (any, error) {
 			return 0, nil

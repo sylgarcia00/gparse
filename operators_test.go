@@ -1350,9 +1350,10 @@ func TestMapLiteralErrors(t *testing.T) {
 
 // TestEmptyCallThroughParse proves the no-argument call path `foo()` parses,
 // sharing the empty-bracket fix with `[]`/`{}` (previously the empty parens
-// closed with no operand and failed at parse). No zero-argument built-in exists
-// yet, so the observable proof is that parsing succeeds and the call reaches the
-// built-in's own arity check at evaluation time instead of a bracket parse error.
+// closed with no operand and failed at parse). Here the observable proof is that
+// parsing succeeds and the call reaches the built-in's own arity check at
+// evaluation time instead of a bracket parse error; a genuinely zero-argument
+// call that succeeds is covered by TestWithBuiltin ("f()").
 func TestEmptyCallThroughParse(t *testing.T) {
 	// len()/type() require exactly one argument; min()/max() at least one.
 	tests := []struct {
