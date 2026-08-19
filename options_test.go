@@ -385,6 +385,10 @@ func TestIsValidOpRune(t *testing.T) {
 		{"at sign is a valid operator rune", '@', true},
 		{"letter is not", 'a', false},
 		{"digit is not", '1', false},
+		// Non-ASCII numeral: unicode.IsNumber (the lexer's number-branch test)
+		// is true though unicode.IsDigit is false. Pins that isValidOpRune tracks
+		// the lexer's IsNumber routing, not IsDigit, so it can't drift.
+		{"vulgar fraction one-half is a number, not an operator rune", '½', false},
 		{"space is not", ' ', false},
 		{"open paren is a token-boundary char", '(', false},
 		{"minus is a token-boundary char", '-', false},

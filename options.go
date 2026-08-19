@@ -319,26 +319,35 @@ func registerOpRunes(reg *registry, sym string) {
 	}
 }
 
+// lexerRoutesElsewhere reports whether the main lexer loop (parse) would route c
+// to a non-operator branch rather than the generic-operator branch: a number
+// (unicode.IsNumber), a variable/identifier (isVarChar), a string literal
+// (quotes), or one of the bracket / member-access characters handled by their
+// own switch cases. It is the single source of truth for that routing, shared
+// by parse's dispatch intent and by isValidOpRune, so the two cannot drift.
+func lexerRoutesElsewhere(c rune) bool {
+	switch c {
+	case '\'', '"': // string-literal openers
+		return true
+	case '(', ')', '[', ']', '{', '}', '.': // bracket + member-access cases
+		return true
+	}
+	return unicode.IsNumber(c) || isVarChar(c)
+}
+
 // isValidOpRune reports whether c may appear in a custom operator symbol. It
-// must not be a token character the lexer routes elsewhere (digits, letters,
-// quotes, brackets, whitespace) nor an operator-boundary character
+// must not be a rune the lexer routes elsewhere (lexerRoutesElsewhere), a
+// whitespace token separator, nor an operator-boundary character
 // (opStartingChars) that would prevent the multi-rune symbol from being scanned
 // as a single operator.
 func isValidOpRune(c rune) bool {
+	if lexerRoutesElsewhere(c) {
+		return false
+	}
 	if opStartingChars[c] {
 		return false
 	}
-	if unicode.IsLetter(c) || unicode.IsDigit(c) || unicode.IsSpace(c) {
-		return false
-	}
-	// '.' is member access (a built-in operator with special lexer handling in
-	// parseNumber and the '.' case of parse); quotes start string literals.
-	// A custom symbol using either could never be scanned back as one operator.
-	switch c {
-	case '\'', '"', '.':
-		return false
-	}
-	return true
+	return !unicode.IsSpace(c)
 }
 
 // wrapOperator adapts a user-facing binary func(a, b any) into the internal
