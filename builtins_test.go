@@ -151,6 +151,11 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `len(split("a,b,c", ",")) == 3`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `type(split("a", ",")) == "list"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `split(tags, ",")[1] == "b"`, payload: json.RawMessage(`{"tags":"a,b,c"}`), expectedResult: true},
+
+		// replace normalizes a JSON field before a filter compares it — e.g.
+		// strip separators out of a phone number, or blank out a substring.
+		{expr: `replace(phone, "-", "") == "11999998888"`, payload: json.RawMessage(`{"phone":"11-99999-8888"}`), expectedResult: true},
+		{expr: `replace("banana", "a", "o") == "bonono"`, payload: json.RawMessage("{}"), expectedResult: true},
 	}
 
 	for _, test := range tests {
@@ -622,4 +627,42 @@ func TestBuiltinSplitErrors(t *testing.T) {
 
 	_, err = builtinSplit([]Token{strToken("a"), intToken(1)}, nil)
 	assertErrContains(t, err, "split() second argument is not a string")
+}
+
+func TestBuiltinReplace(t *testing.T) {
+	tests := []struct {
+		name           string
+		s, old, newStr strToken
+		want           strToken
+	}{
+		{name: "all occurrences", s: "banana", old: "a", newStr: "o", want: "bonono"},
+		{name: "multi-char old", s: "11-99999-8888", old: "-", newStr: "", want: "11999998888"},
+		{name: "old absent", s: "abc", old: "x", newStr: "y", want: "abc"},
+		{name: "empty old inserts between runes", s: "ab", old: "", newStr: "-", want: "-a-b-"},
+		{name: "unicode", s: "café", old: "é", newStr: "e", want: "cafe"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinReplace([]Token{test.s, test.old, test.newStr}, nil)
+			assertNoErr(t, err)
+			if got != test.want {
+				t.Fatalf("expected %v, got %v", test.want, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinReplaceErrors(t *testing.T) {
+	_, err := builtinReplace([]Token{strToken("a"), strToken("b")}, nil)
+	assertErrContains(t, err, "exactly three arguments")
+
+	_, err = builtinReplace([]Token{intToken(1), strToken("a"), strToken("b")}, nil)
+	assertErrContains(t, err, "replace() first argument is not a string")
+
+	_, err = builtinReplace([]Token{strToken("a"), intToken(1), strToken("b")}, nil)
+	assertErrContains(t, err, "replace() second argument is not a string")
+
+	_, err = builtinReplace([]Token{strToken("a"), strToken("b"), intToken(1)}, nil)
+	assertErrContains(t, err, "replace() third argument is not a string")
 }

@@ -15,22 +15,23 @@ import (
 // in operators.go): a call like `min(a, b, c)` arrives here as a spread of one
 // arg per element.
 var builtinFunctions = map[string]Function{
-	"len":   builtinLen,
-	"type":  builtinType,
-	"min":   builtinMin,
-	"max":   builtinMax,
-	"abs":   builtinAbs,
-	"floor": builtinFloor,
-	"ceil":  builtinCeil,
-	"round": builtinRound,
-	"sqrt":  builtinSqrt,
-	"str":   builtinStr,
-	"int":   builtinInt,
-	"float": builtinFloat,
-	"lower": builtinLower,
-	"upper": builtinUpper,
-	"strip": builtinStrip,
-	"split": builtinSplit,
+	"len":     builtinLen,
+	"type":    builtinType,
+	"min":     builtinMin,
+	"max":     builtinMax,
+	"abs":     builtinAbs,
+	"floor":   builtinFloor,
+	"ceil":    builtinCeil,
+	"round":   builtinRound,
+	"sqrt":    builtinSqrt,
+	"str":     builtinStr,
+	"int":     builtinInt,
+	"float":   builtinFloat,
+	"lower":   builtinLower,
+	"upper":   builtinUpper,
+	"strip":   builtinStrip,
+	"split":   builtinSplit,
+	"replace": builtinReplace,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -407,6 +408,42 @@ func builtinSplit(args []Token, scope mapToken) (Token, error) {
 		out[i] = strToken(p)
 	}
 	return out, nil
+}
+
+// builtinReplace implements `replace(s, old, new)`: s with every non-overlapping
+// occurrence of old replaced by new (strings.ReplaceAll). All three arguments
+// must be strToken; anything else is a RuntimeErr. It complements lower/upper/
+// strip/split for normalizing JSON string fields before a filter compares them —
+// e.g. `replace(phone, "-", "") == "11999998888"`. An empty old inserts new
+// between every UTF-8 rune, matching Go's own strings.ReplaceAll semantics.
+func builtinReplace(args []Token, scope mapToken) (Token, error) {
+	if len(args) != 3 {
+		return nil, SyntaxErr("built-in function expects exactly three arguments", map[string]any{
+			"function": "replace",
+			"gotArgs":  len(args),
+		})
+	}
+
+	s, ok := args[0].(strToken)
+	if !ok {
+		return nil, RuntimeErr("replace() first argument is not a string", map[string]any{
+			"argument": args[0],
+		})
+	}
+	old, ok := args[1].(strToken)
+	if !ok {
+		return nil, RuntimeErr("replace() second argument is not a string", map[string]any{
+			"argument": args[1],
+		})
+	}
+	newStr, ok := args[2].(strToken)
+	if !ok {
+		return nil, RuntimeErr("replace() third argument is not a string", map[string]any{
+			"argument": args[2],
+		})
+	}
+
+	return strToken(strings.ReplaceAll(string(s), string(old), string(newStr))), nil
 }
 
 func strTransform(name string, args []Token, fn func(string) string) (Token, error) {
