@@ -168,6 +168,12 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `startswith("abc", "ab")`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `endswith(email, "@acme.com")`, payload: json.RawMessage(`{"email":"vini@acme.com"}`), expectedResult: true},
 		{expr: `endswith(email, "@other.com")`, payload: json.RawMessage(`{"email":"vini@acme.com"}`), expectedResult: false},
+
+		// find gives the byte position of a substring (-1 when absent), letting a
+		// filter compare against it — e.g. the "@" splits a local part from a host.
+		{expr: `find(email, "@") == 4`, payload: json.RawMessage(`{"email":"vini@acme.com"}`), expectedResult: true},
+		{expr: `find("abcabc", "bc") == 1`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `find(tags, "urgent") == -1`, payload: json.RawMessage(`{"tags":"a,low,b"}`), expectedResult: true},
 	}
 
 	for _, test := range tests {
@@ -746,6 +752,44 @@ func TestBuiltinStrPredicates(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBuiltinFind covers find over the first-match, later-match, absent (-1),
+// empty-needle (0) and unicode (byte index) cases.
+func TestBuiltinFind(t *testing.T) {
+	tests := []struct {
+		name string
+		s    strToken
+		sub  strToken
+		want intToken
+	}{
+		{name: "first occurrence", s: "abcabc", sub: "bc", want: 1},
+		{name: "absent", s: "abc", sub: "xyz", want: -1},
+		{name: "empty needle", s: "abc", sub: "", want: 0},
+		{name: "at start", s: "abc", sub: "a", want: 0},
+		{name: "unicode byte index", s: "café", sub: "é", want: 3},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinFind([]Token{test.s, test.sub}, nil)
+			assertNoErr(t, err)
+			if got != test.want {
+				t.Fatalf("expected %v, got %v", test.want, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinFindErrors(t *testing.T) {
+	_, err := builtinFind([]Token{strToken("a")}, nil)
+	assertErrContains(t, err, "exactly two arguments")
+
+	_, err = builtinFind([]Token{intToken(1), strToken("a")}, nil)
+	assertErrContains(t, err, "find() first argument is not a string")
+
+	_, err = builtinFind([]Token{strToken("a"), intToken(1)}, nil)
+	assertErrContains(t, err, "find() second argument is not a string")
 }
 
 func TestBuiltinStrPredicateErrors(t *testing.T) {

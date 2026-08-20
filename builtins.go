@@ -37,6 +37,7 @@ var builtinFunctions = map[string]Function{
 	"contains":   builtinContains,
 	"startswith": builtinStartsWith,
 	"endswith":   builtinEndsWith,
+	"find":       builtinFind,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -471,10 +472,24 @@ func builtinEndsWith(args []Token, scope mapToken) (Token, error) {
 	return boolToken(strings.HasSuffix(s, suffix)), nil
 }
 
+// builtinFind implements `find(s, sub)`: the byte index of the first occurrence
+// of sub in s, or -1 when sub is absent (strings.Index). It complements the
+// boolean contains predicate by giving the position, and the index is by byte
+// to stay consistent with how str[i] and len(str) count bytes (see indexOp and
+// builtinLen). An empty sub returns 0 (matching Go's strings.Index). Both
+// arguments must be strToken; anything else is a RuntimeErr.
+func builtinFind(args []Token, scope mapToken) (Token, error) {
+	s, sub, err := twoStrArgs("find", args)
+	if err != nil {
+		return nil, err
+	}
+	return intToken(strings.Index(s, sub)), nil
+}
+
 // twoStrArgs validates that args holds exactly two strToken values and returns
 // them as native strings. It centralizes the arity + per-argument type checks
-// shared by the two-string built-ins (split, contains, startswith, endswith) so
-// their error messages stay identical and cannot drift.
+// shared by the two-string built-ins (split, contains, startswith, endswith,
+// find) so their error messages stay identical and cannot drift.
 func twoStrArgs(name string, args []Token) (string, string, error) {
 	if len(args) != 2 {
 		return "", "", SyntaxErr("built-in function expects exactly two arguments", map[string]any{
