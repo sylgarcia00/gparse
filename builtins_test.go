@@ -152,6 +152,11 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `type(split("a", ",")) == "list"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `split(tags, ",")[1] == "b"`, payload: json.RawMessage(`{"tags":"a,b,c"}`), expectedResult: true},
 
+		// join is the inverse of split: it round-trips a delimited field with a
+		// different separator, or re-joins a list built from a JSON string field.
+		{expr: `join(split("a,b,c", ","), ";") == "a;b;c"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `join(split(tags, ","), "") == "abc"`, payload: json.RawMessage(`{"tags":"a,b,c"}`), expectedResult: true},
+
 		// replace normalizes a JSON field before a filter compares it — e.g.
 		// strip separators out of a phone number, or blank out a substring.
 		{expr: `replace(phone, "-", "") == "11999998888"`, payload: json.RawMessage(`{"phone":"11-99999-8888"}`), expectedResult: true},
@@ -672,6 +677,45 @@ func TestBuiltinReplaceErrors(t *testing.T) {
 
 	_, err = builtinReplace([]Token{strToken("a"), strToken("b"), intToken(1)}, nil)
 	assertErrContains(t, err, "replace() third argument is not a string")
+}
+
+func TestBuiltinJoin(t *testing.T) {
+	tests := []struct {
+		name string
+		list listToken
+		sep  strToken
+		want strToken
+	}{
+		{name: "comma", list: listToken{strToken("a"), strToken("b"), strToken("c")}, sep: ",", want: "a,b,c"},
+		{name: "empty sep", list: listToken{strToken("a"), strToken("b")}, sep: "", want: "ab"},
+		{name: "single element", list: listToken{strToken("solo")}, sep: ",", want: "solo"},
+		{name: "empty list", list: listToken{}, sep: ",", want: ""},
+		{name: "unicode elements", list: listToken{strToken("á"), strToken("é")}, sep: "-", want: "á-é"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinJoin([]Token{test.list, test.sep}, nil)
+			assertNoErr(t, err)
+			if got != test.want {
+				t.Fatalf("expected %v, got %v", test.want, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinJoinErrors(t *testing.T) {
+	_, err := builtinJoin([]Token{listToken{}}, nil)
+	assertErrContains(t, err, "exactly two arguments")
+
+	_, err = builtinJoin([]Token{strToken("a"), strToken(",")}, nil)
+	assertErrContains(t, err, "join() first argument is not a list")
+
+	_, err = builtinJoin([]Token{listToken{strToken("a")}, intToken(1)}, nil)
+	assertErrContains(t, err, "join() second argument is not a string")
+
+	_, err = builtinJoin([]Token{listToken{strToken("a"), intToken(2)}, strToken(",")}, nil)
+	assertErrContains(t, err, "join() list element is not a string")
 }
 
 // TestBuiltinStrPredicates covers contains/startswith/endswith over the match,

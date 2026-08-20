@@ -31,6 +31,7 @@ var builtinFunctions = map[string]Function{
 	"upper":   builtinUpper,
 	"strip":   builtinStrip,
 	"split":   builtinSplit,
+	"join":    builtinJoin,
 	"replace": builtinReplace,
 
 	"contains":   builtinContains,
@@ -397,6 +398,46 @@ func builtinSplit(args []Token, scope mapToken) (Token, error) {
 		out[i] = strToken(p)
 	}
 	return out, nil
+}
+
+// builtinJoin implements `join(list, sep)`: the inverse of split — it
+// concatenates the elements of a listToken into one string, separated by sep.
+// The first argument must be a listToken whose every element is a strToken, and
+// sep must be a strToken; anything else is a RuntimeErr. Combined with split it
+// round-trips a delimited JSON field (e.g. `join(split(csv, ","), ";")`).
+func builtinJoin(args []Token, scope mapToken) (Token, error) {
+	if len(args) != 2 {
+		return nil, SyntaxErr("built-in function expects exactly two arguments", map[string]any{
+			"function": "join",
+			"gotArgs":  len(args),
+		})
+	}
+
+	list, ok := args[0].(listToken)
+	if !ok {
+		return nil, RuntimeErr("join() first argument is not a list", map[string]any{
+			"argument": args[0],
+		})
+	}
+	sep, ok := args[1].(strToken)
+	if !ok {
+		return nil, RuntimeErr("join() second argument is not a string", map[string]any{
+			"argument": args[1],
+		})
+	}
+
+	parts := make([]string, len(list))
+	for i, elem := range list {
+		s, ok := elem.(strToken)
+		if !ok {
+			return nil, RuntimeErr("join() list element is not a string", map[string]any{
+				"index":   i,
+				"element": elem,
+			})
+		}
+		parts[i] = string(s)
+	}
+	return strToken(strings.Join(parts, string(sep))), nil
 }
 
 // builtinContains implements `contains(s, sub)`, builtinStartsWith

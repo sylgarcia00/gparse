@@ -22,7 +22,7 @@ Further along than "work in progress" suggests. Working today:
   unary operators, and boolean logic with `None` behaving as falsy.
 - Built-ins for numbers (`len`, `min`, `max`, `abs`, `floor`, `ceil`, `round`,
   `sqrt`), conversions (`str`, `int`, `float`), and strings (`lower`, `upper`,
-  `strip`, `split`, `replace`, `contains`, `startswith`, `endswith`).
+  `strip`, `split`, `join`, `replace`, `contains`, `startswith`, `endswith`).
 - A registry for user-defined builtins and operators (see *Extending gparse*).
 
 Deliberately absent (mirroring cparse): ordering comparisons between strings.
