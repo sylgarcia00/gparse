@@ -32,6 +32,10 @@ var builtinFunctions = map[string]Function{
 	"strip":   builtinStrip,
 	"split":   builtinSplit,
 	"replace": builtinReplace,
+
+	"contains":   builtinContains,
+	"startswith": builtinStartsWith,
+	"endswith":   builtinEndsWith,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -382,32 +386,75 @@ func builtinStrip(args []Token, scope mapToken) (Token, error) {
 // field into a list that len/indexing can then work on. An empty sep splits s
 // into its UTF-8 runes, matching Go's own strings.Split semantics.
 func builtinSplit(args []Token, scope mapToken) (Token, error) {
-	if len(args) != 2 {
-		return nil, SyntaxErr("built-in function expects exactly two arguments", map[string]any{
-			"function": "split",
-			"gotArgs":  len(args),
-		})
+	s, sep, err := twoStrArgs("split", args)
+	if err != nil {
+		return nil, err
 	}
 
-	s, ok := args[0].(strToken)
-	if !ok {
-		return nil, RuntimeErr("split() first argument is not a string", map[string]any{
-			"argument": args[0],
-		})
-	}
-	sep, ok := args[1].(strToken)
-	if !ok {
-		return nil, RuntimeErr("split() second argument is not a string", map[string]any{
-			"argument": args[1],
-		})
-	}
-
-	parts := strings.Split(string(s), string(sep))
+	parts := strings.Split(s, sep)
 	out := make(listToken, len(parts))
 	for i, p := range parts {
 		out[i] = strToken(p)
 	}
 	return out, nil
+}
+
+// builtinContains implements `contains(s, sub)`, builtinStartsWith
+// `startswith(s, prefix)` and builtinEndsWith `endswith(s, suffix)`: boolean
+// predicates over two strToken arguments (strings.Contains/HasPrefix/HasSuffix).
+// They complement the lower/upper/strip/split/replace string set by letting a
+// filter test JSON fields directly — e.g. `endswith(user.email, "@acme.com")`
+// or `contains(tags, "urgent")` — instead of only normalizing them. A non-string
+// argument is a RuntimeErr, matching the rest of the string built-ins.
+func builtinContains(args []Token, scope mapToken) (Token, error) {
+	s, sub, err := twoStrArgs("contains", args)
+	if err != nil {
+		return nil, err
+	}
+	return boolToken(strings.Contains(s, sub)), nil
+}
+
+func builtinStartsWith(args []Token, scope mapToken) (Token, error) {
+	s, prefix, err := twoStrArgs("startswith", args)
+	if err != nil {
+		return nil, err
+	}
+	return boolToken(strings.HasPrefix(s, prefix)), nil
+}
+
+func builtinEndsWith(args []Token, scope mapToken) (Token, error) {
+	s, suffix, err := twoStrArgs("endswith", args)
+	if err != nil {
+		return nil, err
+	}
+	return boolToken(strings.HasSuffix(s, suffix)), nil
+}
+
+// twoStrArgs validates that args holds exactly two strToken values and returns
+// them as native strings. It centralizes the arity + per-argument type checks
+// shared by the two-string built-ins (split, contains, startswith, endswith) so
+// their error messages stay identical and cannot drift.
+func twoStrArgs(name string, args []Token) (string, string, error) {
+	if len(args) != 2 {
+		return "", "", SyntaxErr("built-in function expects exactly two arguments", map[string]any{
+			"function": name,
+			"gotArgs":  len(args),
+		})
+	}
+
+	a, ok := args[0].(strToken)
+	if !ok {
+		return "", "", RuntimeErr(name+"() first argument is not a string", map[string]any{
+			"argument": args[0],
+		})
+	}
+	b, ok := args[1].(strToken)
+	if !ok {
+		return "", "", RuntimeErr(name+"() second argument is not a string", map[string]any{
+			"argument": args[1],
+		})
+	}
+	return string(a), string(b), nil
 }
 
 // builtinReplace implements `replace(s, old, new)`: s with every non-overlapping

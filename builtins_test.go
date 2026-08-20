@@ -156,6 +156,13 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		// strip separators out of a phone number, or blank out a substring.
 		{expr: `replace(phone, "-", "") == "11999998888"`, payload: json.RawMessage(`{"phone":"11-99999-8888"}`), expectedResult: true},
 		{expr: `replace("banana", "a", "o") == "bonono"`, payload: json.RawMessage("{}"), expectedResult: true},
+
+		// contains/startswith/endswith test a JSON field directly in a filter,
+		// without normalizing it first.
+		{expr: `contains(tags, "urgent")`, payload: json.RawMessage(`{"tags":"a,urgent,b"}`), expectedResult: true},
+		{expr: `startswith("abc", "ab")`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `endswith(email, "@acme.com")`, payload: json.RawMessage(`{"email":"vini@acme.com"}`), expectedResult: true},
+		{expr: `endswith(email, "@other.com")`, payload: json.RawMessage(`{"email":"vini@acme.com"}`), expectedResult: false},
 	}
 
 	for _, test := range tests {
@@ -665,4 +672,56 @@ func TestBuiltinReplaceErrors(t *testing.T) {
 
 	_, err = builtinReplace([]Token{strToken("a"), strToken("b"), intToken(1)}, nil)
 	assertErrContains(t, err, "replace() third argument is not a string")
+}
+
+// TestBuiltinStrPredicates covers contains/startswith/endswith over the match,
+// no-match, empty-needle (always true) and unicode cases.
+func TestBuiltinStrPredicates(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func([]Token, mapToken) (Token, error)
+		s, q strToken
+		want boolToken
+	}{
+		{name: "contains match", fn: builtinContains, s: "abcabc", q: "bca", want: true},
+		{name: "contains absent", fn: builtinContains, s: "abc", q: "xyz", want: false},
+		{name: "contains empty needle", fn: builtinContains, s: "abc", q: "", want: true},
+		{name: "contains unicode", fn: builtinContains, s: "café", q: "é", want: true},
+		{name: "startswith match", fn: builtinStartsWith, s: "abcdef", q: "abc", want: true},
+		{name: "startswith absent", fn: builtinStartsWith, s: "abcdef", q: "bcd", want: false},
+		{name: "endswith match", fn: builtinEndsWith, s: "abcdef", q: "def", want: true},
+		{name: "endswith absent", fn: builtinEndsWith, s: "abcdef", q: "de", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := test.fn([]Token{test.s, test.q}, nil)
+			assertNoErr(t, err)
+			if got != test.want {
+				t.Fatalf("expected %v, got %v", test.want, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinStrPredicateErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fn   func([]Token, mapToken) (Token, error)
+	}{
+		{name: "contains", fn: builtinContains},
+		{name: "startswith", fn: builtinStartsWith},
+		{name: "endswith", fn: builtinEndsWith},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.fn([]Token{strToken("a")}, nil)
+			assertErrContains(t, err, "exactly two arguments")
+
+			_, err = tc.fn([]Token{intToken(1), strToken("a")}, nil)
+			assertErrContains(t, err, tc.name+"() first argument is not a string")
+
+			_, err = tc.fn([]Token{strToken("a"), intToken(1)}, nil)
+			assertErrContains(t, err, tc.name+"() second argument is not a string")
+		})
+	}
 }
