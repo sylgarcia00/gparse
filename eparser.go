@@ -17,22 +17,64 @@ var opStartingChars = map[rune]bool{
 	'_': true,
 }
 
+// Parser holds a registry frozen once from its options, so many parses reuse
+// the same custom builtins/operators without re-applying (and re-validating)
+// options on every call. Build one with NewParser and call Parse/ParseExpr
+// repeatedly.
+//
+// A Parser is read-only after NewParser returns: the parse and evaluate paths
+// only read the registry, never write it, so concurrent Parse/ParseExpr calls
+// on the same *Parser are safe.
+type Parser struct {
+	reg *registry
+}
+
+// NewParser applies and validates opts once against a registry seeded from the
+// package defaults, then freezes it into the returned Parser. An option that
+// fails (e.g. a name collision) surfaces its error here and no Parser is
+// returned. With no options the Parser uses the package defaults.
+func NewParser(opts ...Option) (*Parser, error) {
+	reg := defaultRegistry()
+	for _, opt := range opts {
+		if err := opt(reg); err != nil {
+			return nil, err
+		}
+	}
+
+	return &Parser{reg: reg}, nil
+}
+
+// Parse compiles strExpr into a BoolExpr using the Parser's frozen registry.
+func (p *Parser) Parse(strExpr string) (BoolExpr, error) {
+	expr, err := p.ParseExpr(strExpr)
+
+	return BoolExpr{expr: expr}, err
+}
+
+// ParseExpr compiles strExpr into an Expr (the core, type-agnostic surface)
+// using the Parser's frozen registry.
+func (p *Parser) ParseExpr(strExpr string) (Expr, error) {
+	rpn, err := parse(strExpr, nil, p.reg)
+
+	return Expr{rpn: rpn, reg: p.reg}, err
+}
+
 // Parse compiles strExpr into a BoolExpr. Options overlay per-call custom
 // entries (e.g. WithBuiltin) onto a registry seeded from the package defaults;
 // with no options it uses the defaults, preserving the original behavior for
 // existing callers. An option that fails (e.g. a name collision) surfaces its
 // error here and no expression is returned.
-func Parse(strExpr string, opts ...Option) (_ BoolExpr, err error) {
-	reg := defaultRegistry()
-	for _, opt := range opts {
-		if err := opt(reg); err != nil {
-			return BoolExpr{}, err
-		}
+//
+// This is the one-shot door: it builds a fresh Parser per call. To parse many
+// expressions under the same options, build a Parser once with NewParser and
+// reuse it.
+func Parse(strExpr string, opts ...Option) (BoolExpr, error) {
+	p, err := NewParser(opts...)
+	if err != nil {
+		return BoolExpr{}, err
 	}
 
-	rpn, err := parse(strExpr, nil, reg)
-
-	return BoolExpr{expr: Expr{rpn: rpn, reg: reg}}, err
+	return p.Parse(strExpr)
 }
 
 // Expr is a compiled expression that evaluates over a source-agnostic Scope and
