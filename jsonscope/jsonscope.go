@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/vingarcia/gparse"
+	"github.com/sylgarcia00/gparse"
 )
 
 // New validates the top-level JSON object and returns a gparse.Scope whose

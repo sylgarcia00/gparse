@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vingarcia/gparse"
-	"github.com/vingarcia/gparse/jsonscope"
+	"github.com/sylgarcia00/gparse"
+	"github.com/sylgarcia00/gparse/jsonscope"
 )
 
 // TestNewInvalidJSON checks that a malformed payload is rejected up front by
