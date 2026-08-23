@@ -4,8 +4,9 @@ Status: **IMPLEMENTED** (Option A shipped, slices 6b–6c-c, 2026-08-17). Writte
 by Sylphie 2026-08-14, flagged CORE by Vini. Goal: let a caller extend gparse
 with their own operators / builtins / precedence without forking the package.
 See the *Extending gparse* section of the README for the shipped public API
-(`WithBuiltin`/`WithOperator`/`WithLeftUnary`/`WithRightUnary`/`SamePrecAs`);
-Option B (a reusable `Parser` value) remains a future add-on.
+(`WithBuiltin`/`WithOperator`/`WithLeftUnary`/`WithRightUnary`/`SamePrecAs`).
+Option B (a reusable `Parser` value) also shipped (slice B1, 2026-08-22): see
+below.
 
 ## Problem
 
@@ -59,17 +60,24 @@ gparse.WithBuiltin("geodist", geodistFn)
 - Cost: thread `*registry` through `parse`/`rpn_builder`/`evaluate` (they read
   globals directly today — the mechanical part of the change).
 
-### B — Explicit `Parser` value
+### B — Explicit `Parser` value (SHIPPED, slice B1)
 
 ```go
-p := gparse.NewParser().WithOperator(...).WithBuiltin(...)
+p, _ := gparse.NewParser(gparse.WithOperator(...), gparse.WithBuiltin(...))
 expr, _ := p.Parse("a ~= b")
 ```
 
 Same registry mechanics as A; better when one config parses many expressions
-(compile the registry once, reuse). More API surface. **A and B compose** — B
-is "A with the registry named and reused"; can ship A first, add `Parser`
-later without breaking callers.
+(apply+validate the options once, freeze the registry, reuse). More API
+surface. **A and B compose** — B is "A with the registry named and reused":
+the free `Parse(expr, opts...)` now delegates to `NewParser(opts...)` +
+`(*Parser).Parse`, so shipping B kept A's callers working unchanged.
+
+The options take the same `...Option` form as the free `Parse` (not the
+builder chain originally sketched here) — one constructor, one way to configure.
+The frozen `*Parser` is read-only on both the parse and evaluate paths, so a
+single instance is safe for concurrent `Parse`/`ParseExpr` calls (pinned by a
+`-race` test sharing one `Parser` across goroutines).
 
 ### C — Keep globals, expose `Register*()` funcs
 
@@ -79,10 +87,11 @@ the process-wide-shared-mutable-state race; no isolation between callers.
 ## Recommendation
 
 Ship **A** (functional options) first — smallest public surface, fully
-back-compatible, kills the global-mutation problem. Add **B** later if a
-parse-many-with-one-config need shows up. The bulk of the work is identical
-either way: introduce an internal `registry` struct and thread it through the
-three read sites.
+back-compatible, kills the global-mutation problem. **Both shipped:** A landed
+in slices 6b–6c-c (2026-08-17), then **B** (the reusable `Parser`) in slice B1
+(2026-08-22) once the parse-many-with-one-config path was worth naming. The bulk
+of the work was identical either way: an internal `registry` struct threaded
+through the three read sites; B just names and freezes that registry for reuse.
 
 ## Open questions — RESOLVED
 

@@ -72,6 +72,33 @@ both — the two would share a single precedence and be told apart only by
 position, which is incoherent, so registering the same symbol as left- and
 right-unary is an error.
 
+### Parsing many expressions with one config
+
+`Parse(expr, opts...)` is the one-shot door: it applies and validates the
+options on every call. When one configuration parses many expressions, build a
+`Parser` once with `NewParser` and reuse it — the options are applied and
+validated a single time and the registry is frozen, so each `Parse` skips that
+work:
+
+```go
+p, err := gparse.NewParser(
+    gparse.WithBuiltin("geodist", geodist),
+    gparse.WithOperator("~=", gparse.SamePrecAs("=="), regexMatch),
+)
+if err != nil {
+    return err
+}
+
+for _, rule := range rules {
+    expr, err := p.Parse(rule)
+    // ...
+}
+```
+
+A `Parser` is read-only after `NewParser` returns — the parse and evaluate
+paths only read the frozen registry — so the same `*Parser` is safe to share
+across goroutines.
+
 ## Design notes
 
 Unlike the C++ original, this port has no "smart" wrapper type like
