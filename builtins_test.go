@@ -125,6 +125,14 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `sqrt(9.0) == 3.0`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `type(sqrt(9.0)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
 
+		// sum() adds its numeral args, or the elements of a single list arg, and
+		// preserves int-ness until a float appears. The list case reads straight
+		// from the JSON payload.
+		{expr: `sum(1, 2, 3) == 6`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `sum(items) == 6`, payload: json.RawMessage(`{"items":[1,2,3]}`), expectedResult: true},
+		{expr: `type(sum(1, 2)) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(sum(1, 2.5)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
+
 		// str/int/float type conversions: int truncates toward zero, float widens
 		// an int, str renders unquoted. type() confirms the resulting kind.
 		{expr: `int(3.7) == 3`, payload: json.RawMessage("{}"), expectedResult: true},
@@ -178,7 +186,7 @@ func TestBuiltinsThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, test.payload))
@@ -196,7 +204,7 @@ func TestBuiltinsThroughParse(t *testing.T) {
 // (here "len") can never be read as a value. Used uncalled it is not a boolean
 // and fails to evaluate rather than resolving to the field.
 func TestBuiltinNameShadowsPayloadField(t *testing.T) {
-	expr, err := Parse(`len == 5`)
+	expr, err := Parse(`len == 5`, Args{})
 	assertNoErr(t, err)
 
 	_, err = expr.Evaluate(jsonScope(t, json.RawMessage(`{"len":5}`)))
@@ -209,7 +217,7 @@ func TestBuiltinNameShadowsPayloadField(t *testing.T) {
 // as an error through the public API (wrapped by evaluate's "error parsing
 // function").
 func TestBuiltinLenNonSizableThroughParse(t *testing.T) {
-	expr, err := Parse(`len(5) == 1`)
+	expr, err := Parse(`len(5) == 1`, Args{})
 	assertNoErr(t, err)
 
 	_, err = expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -259,6 +267,45 @@ func TestBuiltinMinMaxErrors(t *testing.T) {
 	assertErrContains(t, err, "at least one argument")
 
 	_, err = builtinMin([]Token{intToken(1), strToken("x")}, nil)
+	assertErrContains(t, err, "not a number")
+}
+
+// TestBuiltinSum covers the numeral sum: type preservation (all-int stays int,
+// any float promotes to float), the single-list special case that makes
+// sum([1,2,3]) equal sum(1,2,3), and the empty-list identity.
+func TestBuiltinSum(t *testing.T) {
+	tests := []struct {
+		name string
+		args []Token
+		want Token
+	}{
+		{name: "ints spread", args: []Token{intToken(1), intToken(2), intToken(3)}, want: intToken(6)},
+		{name: "single int", args: []Token{intToken(7)}, want: intToken(7)},
+		{name: "mixed promotes to float", args: []Token{intToken(1), floatToken(2.5)}, want: floatToken(3.5)},
+		{name: "single list", args: []Token{listToken{intToken(1), intToken(2), intToken(3)}}, want: intToken(6)},
+		{name: "empty list sums to zero", args: []Token{listToken{}}, want: intToken(0)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinSum(test.args, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v (%T), got %v (%T)", test.want, test.want, got, got)
+			}
+		})
+	}
+}
+
+func TestBuiltinSumErrors(t *testing.T) {
+	_, err := builtinSum([]Token{}, nil)
+	assertErrContains(t, err, "at least one argument")
+
+	_, err = builtinSum([]Token{intToken(1), strToken("x")}, nil)
+	assertErrContains(t, err, "not a number")
+
+	_, err = builtinSum([]Token{listToken{intToken(1), strToken("x")}}, nil)
 	assertErrContains(t, err, "not a number")
 }
 

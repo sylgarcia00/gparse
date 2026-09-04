@@ -38,6 +38,8 @@ var builtinFunctions = map[string]Function{
 	"startswith": builtinStartsWith,
 	"endswith":   builtinEndsWith,
 	"find":       builtinFind,
+
+	"sum": builtinSum,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -192,6 +194,53 @@ func builtinSqrt(args []Token, scope mapToken) (Token, error) {
 	}
 
 	return floatToken(math.Sqrt(val)), nil
+}
+
+// builtinSum implements `sum(a, b, ...)`: the sum of its numeral arguments, or
+// of the elements of a single list argument — sum([1,2,3]) equals sum(1,2,3),
+// matching cparse's default_sum. Like min/max it preserves type: the result is
+// an intToken when every summed value is an int and a floatToken as soon as one
+// is a float. It requires at least one argument (a single empty list is allowed
+// and sums to intToken(0)); a non-numeral argument or list element is a
+// RuntimeErr.
+func builtinSum(args []Token, scope mapToken) (Token, error) {
+	if len(args) == 0 {
+		return nil, SyntaxErr("built-in function expects at least one argument", map[string]any{
+			"function": "sum",
+		})
+	}
+
+	// A single list argument sums its elements, so sum([1,2,3]) == sum(1,2,3);
+	// any other shape sums the arguments themselves (the "," call spread).
+	terms := args
+	if len(args) == 1 {
+		if list, ok := args[0].(listToken); ok {
+			terms = list
+		}
+	}
+
+	var intSum int
+	var floatSum float64
+	isFloat := false
+	for _, term := range terms {
+		switch v := term.(type) {
+		case intToken:
+			intSum += int(v)
+			floatSum += float64(v)
+		case floatToken:
+			floatSum += float64(v)
+			isFloat = true
+		default:
+			return nil, RuntimeErr("sum() argument is not a number", map[string]any{
+				"argument": term,
+			})
+		}
+	}
+
+	if isFloat {
+		return floatToken(floatSum), nil
+	}
+	return intToken(intSum), nil
 }
 
 // numeralToInt is the shared body of floor/ceil/round: it validates a single
