@@ -27,6 +27,7 @@ var builtinFunctions = map[string]Function{
 	"str":     builtinStr,
 	"int":     builtinInt,
 	"float":   builtinFloat,
+	"real":    builtinFloat,
 	"lower":   builtinLower,
 	"upper":   builtinUpper,
 	"strip":   builtinStrip,
@@ -40,6 +41,11 @@ var builtinFunctions = map[string]Function{
 	"find":       builtinFind,
 
 	"sum": builtinSum,
+
+	"pow": builtinPow,
+	"sin": builtinSin,
+	"cos": builtinCos,
+	"tan": builtinTan,
 }
 
 // builtinLen implements `len(x)`: the number of elements of a list or map, or
@@ -194,6 +200,70 @@ func builtinSqrt(args []Token, scope mapToken) (Token, error) {
 	}
 
 	return floatToken(math.Sqrt(val)), nil
+}
+
+// builtinPow implements `pow(base, exp)`: base raised to exp, the function form
+// of the "**" operator. Like "**" (and cparse's default_pow, which returns a
+// double from C's pow) it always evaluates as a float, so the result is a
+// floatToken even when both operands are ints (pow(2, 3) -> 8.0). It requires
+// exactly two arguments; a non-numeral argument is a RuntimeErr.
+func builtinPow(args []Token, scope mapToken) (Token, error) {
+	if len(args) != 2 {
+		return nil, SyntaxErr("built-in function expects exactly two arguments", map[string]any{
+			"function": "pow",
+			"gotArgs":  len(args),
+		})
+	}
+
+	base, ok := asFloat(args[0])
+	if !ok {
+		return nil, RuntimeErr("pow() argument is not a number", map[string]any{
+			"argument": args[0],
+		})
+	}
+	exp, ok := asFloat(args[1])
+	if !ok {
+		return nil, RuntimeErr("pow() argument is not a number", map[string]any{
+			"argument": args[1],
+		})
+	}
+
+	return floatToken(math.Pow(base, exp)), nil
+}
+
+// builtinSin/builtinCos/builtinTan implement `sin(x)`/`cos(x)`/`tan(x)`: the
+// trigonometric function of a single numeral, in radians, always returning a
+// floatToken (matching cparse's default_sin/cos/tan, which return C doubles).
+// A non-numeral argument is a RuntimeErr.
+func builtinSin(args []Token, scope mapToken) (Token, error) {
+	return numeralToFloat("sin", args, math.Sin)
+}
+
+func builtinCos(args []Token, scope mapToken) (Token, error) {
+	return numeralToFloat("cos", args, math.Cos)
+}
+
+func builtinTan(args []Token, scope mapToken) (Token, error) {
+	return numeralToFloat("tan", args, math.Tan)
+}
+
+// numeralToFloat is the shared body of sin/cos/tan: it validates a single
+// numeral argument, applies fn to its float64 value and returns a floatToken. A
+// non-numeral argument is a RuntimeErr naming the calling function.
+func numeralToFloat(name string, args []Token, fn func(float64) float64) (Token, error) {
+	arg, err := singleArg(name, args)
+	if err != nil {
+		return nil, err
+	}
+
+	val, ok := asFloat(arg)
+	if !ok {
+		return nil, RuntimeErr(name+"() argument is not a number", map[string]any{
+			"argument": arg,
+		})
+	}
+
+	return floatToken(fn(val)), nil
 }
 
 // builtinSum implements `sum(a, b, ...)`: the sum of its numeral arguments, or

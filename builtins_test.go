@@ -133,6 +133,25 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `type(sum(1, 2)) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `type(sum(1, 2.5)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
 
+		// pow() is the function form of "**": it always returns a float, even for
+		// integer operands (matching cparse's default_pow / C pow), so it agrees
+		// with the "**" operator on the same operands.
+		{expr: `pow(2, 3) == 8.0`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `pow(2, 3) == 2 ** 3`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `pow(9, 0.5) == 3.0`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(pow(2, 3)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
+
+		// real() is an alias of float(): identical conversion and resulting kind.
+		{expr: `real(5) == 5.0`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `real("2.5") == 2.5`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(real(5)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
+
+		// sin/cos/tan take radians and always return a float; cos(0)==1, sin(0)==0.
+		{expr: `cos(0) == 1.0`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `sin(0) == 0.0`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `tan(0) == 0.0`, payload: json.RawMessage("{}"), expectedResult: true},
+		{expr: `type(sin(0)) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
+
 		// str/int/float type conversions: int truncates toward zero, float widens
 		// an int, str renders unquoted. type() confirms the resulting kind.
 		{expr: `int(3.7) == 3`, payload: json.RawMessage("{}"), expectedResult: true},
@@ -446,6 +465,89 @@ func TestBuiltinSqrtErrors(t *testing.T) {
 
 	_, err = builtinSqrt([]Token{intToken(-4)}, nil)
 	assertErrContains(t, err, "sqrt of negative number")
+}
+
+// TestBuiltinPow covers pow returning a floatToken for every operand mix
+// (including two ints, which the "**" operator also floats), a fractional
+// exponent, and the exp==0 identity.
+func TestBuiltinPow(t *testing.T) {
+	tests := []struct {
+		name string
+		args []Token
+		want Token
+	}{
+		{name: "two ints stay float", args: []Token{intToken(2), intToken(3)}, want: floatToken(8.0)},
+		{name: "float base", args: []Token{floatToken(2.0), intToken(3)}, want: floatToken(8.0)},
+		{name: "fractional exponent", args: []Token{intToken(9), floatToken(0.5)}, want: floatToken(3.0)},
+		{name: "exponent zero", args: []Token{intToken(5), intToken(0)}, want: floatToken(1.0)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := builtinPow(test.args, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v (%T), got %v (%T)", test.want, test.want, got, got)
+			}
+		})
+	}
+}
+
+// TestBuiltinPowErrors covers wrong-arity (needs exactly two) and a non-numeral
+// operand in either position.
+func TestBuiltinPowErrors(t *testing.T) {
+	_, err := builtinPow([]Token{intToken(2)}, nil)
+	assertErrContains(t, err, "exactly two arguments")
+
+	_, err = builtinPow([]Token{intToken(2), intToken(3), intToken(4)}, nil)
+	assertErrContains(t, err, "exactly two arguments")
+
+	_, err = builtinPow([]Token{strToken("x"), intToken(3)}, nil)
+	assertErrContains(t, err, "not a number")
+
+	_, err = builtinPow([]Token{intToken(2), strToken("x")}, nil)
+	assertErrContains(t, err, "not a number")
+}
+
+// TestBuiltinSinCosTan covers the trig builtins always returning a floatToken
+// for both int and float operands, on the values whose results are exact.
+func TestBuiltinSinCosTan(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func([]Token, mapToken) (Token, error)
+		arg  Token
+		want Token
+	}{
+		{name: "sin(0)", fn: builtinSin, arg: intToken(0), want: floatToken(0.0)},
+		{name: "cos(0)", fn: builtinCos, arg: intToken(0), want: floatToken(1.0)},
+		{name: "tan(0)", fn: builtinTan, arg: intToken(0), want: floatToken(0.0)},
+		{name: "cos(0.0) float operand", fn: builtinCos, arg: floatToken(0.0), want: floatToken(1.0)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := test.fn([]Token{test.arg}, nil)
+			assertNoErr(t, err)
+
+			if got != test.want {
+				t.Fatalf("expected %v (%T), got %v (%T)", test.want, test.want, got, got)
+			}
+		})
+	}
+}
+
+// TestBuiltinSinCosTanErrors covers wrong-arity and non-numeral paths for all
+// three trig builtins (they share numeralToFloat, so one representative each).
+func TestBuiltinSinCosTanErrors(t *testing.T) {
+	_, err := builtinSin([]Token{}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinCos([]Token{intToken(1), intToken(2)}, nil)
+	assertErrContains(t, err, "exactly one argument")
+
+	_, err = builtinTan([]Token{strToken("x")}, nil)
+	assertErrContains(t, err, "not a number")
 }
 
 // TestBuiltinStr covers str() rendering each token kind. A strToken passes
