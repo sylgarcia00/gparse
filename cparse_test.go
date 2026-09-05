@@ -101,7 +101,7 @@ func TestParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			rawJSON, err := json.Marshal(test.vars)

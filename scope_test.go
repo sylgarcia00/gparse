@@ -67,7 +67,7 @@ func TestEvalThroughMapScope(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			got, err := expr.Evaluate(scope)
@@ -82,7 +82,7 @@ func TestEvalThroughMapScope(t *testing.T) {
 // TestExprEvalReturnsToken checks the core Expr.Eval returns the raw Token
 // (not bool-coerced), so a host can build result types other than bool on it.
 func TestExprEvalReturnsToken(t *testing.T) {
-	boolExpr, err := Parse(`n + 1`)
+	boolExpr, err := Parse(`n + 1`, Args{})
 	assertNoErr(t, err)
 
 	got, err := boolExpr.expr.Eval(MapScope{"n": intToken(41)})

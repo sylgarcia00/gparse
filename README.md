@@ -33,22 +33,32 @@ Open design questions, not yet decided: first-class boolean literals
 
 ## Extending gparse
 
-`Parse` takes functional options, so a caller can add its own builtins and
-operators without forking the package. Options build a per-call registry that
-starts as a copy of the defaults and overlays the custom entries — nothing
-process-global is mutated, so concurrent `Parse` calls never leak operators
-into each other. A registered name that collides with an existing one is an
-error, surfaced from `Parse`: silent shadowing is a worse surprise than a loud
-failure.
+`Parse` takes an `Args` struct, so a caller can add its own builtins and
+operators without forking the package — and godoc shows the whole extension
+surface in one place, the way [krest](https://github.com/vingarcia/krest) does
+it. The zero value `gparse.Args{}` means "defaults only". Entries build a
+per-call registry that starts as a copy of the defaults and overlays the
+custom ones — nothing process-global is mutated, so concurrent `Parse` calls
+never leak operators into each other. A registered name that collides with an
+existing one is an error, surfaced from `Parse`: silent shadowing is a worse
+surprise than a loud failure.
 
 ```go
-expr, err := gparse.Parse(`geodist(a, b) < 100 && tag ~= "^v"`,
-    gparse.WithBuiltin("geodist", geodist),        // geodist(a, b)
-    gparse.WithOperator("~=", gparse.SamePrecAs("=="), regexMatch), // a ~= b
-    gparse.WithLeftUnary("√", sqrtFloor),          // √x
-    gparse.WithRightUnary("°", factorial),         // x°
-)
+expr, err := gparse.Parse(`geodist(a, b) < 100 && tag ~= "^v"`, gparse.Args{
+    Builtins: map[string]func(args ...any) (any, error){
+        "geodist": geodist, // geodist(a, b)
+    },
+    Operators: map[string]gparse.BinaryOperator{
+        "~=": {Prec: gparse.SamePrecAs("=="), Fn: regexMatch}, // a ~= b
+    },
+    LeftUnary:  map[string]func(a any) (any, error){"√": sqrtFloor}, // √x
+    RightUnary: map[string]func(a any) (any, error){"°": factorial}, // x°
+})
 ```
+
+(Once the accepted Go proposal
+[golang/go#12854](https://github.com/golang/go/issues/12854) lands, the struct
+type can be elided at the call site: `gparse.Parse(expr, {Builtins: ...})`.)
 
 Custom functions speak native Go values, not the internal `Token` type —
 gparse boxes/unboxes across the boundary. Supported types are any Go integer
@@ -57,34 +67,36 @@ value overflows the platform `int`), any float (`float32`/`float64` — boxed as
 `float64`), `string`, `bool`, `[]any`, `map[string]any`, and `nil` (for
 `None`). Values handed back to your function are always `int`/`float64`:
 
-| Option | Signature | Adds |
+| Args field | Signature | Adds |
 | --- | --- | --- |
-| `WithBuiltin` | `func(args ...any) (any, error)` | a callable `name(...)` |
-| `WithOperator` | `func(a, b any) (any, error)` | a binary infix `a op b` |
-| `WithLeftUnary` | `func(a any) (any, error)` | a prefix `op a` |
-| `WithRightUnary` | `func(a any) (any, error)` | a postfix `a op` |
+| `Builtins` | `func(args ...any) (any, error)` | a callable `name(...)` |
+| `Operators` | `BinaryOperator{Prec, Fn func(a, b any) (any, error)}` | a binary infix `a op b` |
+| `LeftUnary` | `func(a any) (any, error)` | a prefix `op a` |
+| `RightUnary` | `func(a any) (any, error)` | a postfix `a op` |
 
-`WithOperator` takes a precedence as its second argument: `gparse.Level(n)` for
-a raw level, or `gparse.SamePrecAs("*")` to borrow an existing symbol's level
-without knowing its number. Unary options bind at the built-in unary levels
-(prefix looser than postfix, as in C). A symbol may take one unary role, not
-both — the two would share a single precedence and be told apart only by
-position, which is incoherent, so registering the same symbol as left- and
-right-unary is an error.
+A `BinaryOperator` carries its precedence in `Prec`: `gparse.Level(n)` for a
+raw level, or `gparse.SamePrecAs("*")` to borrow an existing symbol's level
+without knowing its number — the referenced symbol may be a built-in or
+another operator of the same `Args`, in any order. Unary operators bind at the
+built-in unary levels (prefix looser than postfix, as in C). A symbol may take
+one unary role, not both — the two would share a single precedence and be told
+apart only by position, which is incoherent, so registering the same symbol as
+left- and right-unary is an error.
 
 ### Parsing many expressions with one config
 
-`Parse(expr, opts...)` is the one-shot door: it applies and validates the
-options on every call. When one configuration parses many expressions, build a
-`Parser` once with `NewParser` and reuse it — the options are applied and
-validated a single time and the registry is frozen, so each `Parse` skips that
-work:
+`Parse(expr, args)` is the one-shot door: it applies and validates the args on
+every call. When one configuration parses many expressions, build a `Parser`
+once with `NewParser` and reuse it — the args are applied and validated a
+single time and the registry is frozen, so each `Parse` skips that work:
 
 ```go
-p, err := gparse.NewParser(
-    gparse.WithBuiltin("geodist", geodist),
-    gparse.WithOperator("~=", gparse.SamePrecAs("=="), regexMatch),
-)
+p, err := gparse.NewParser(gparse.Args{
+    Builtins: map[string]func(args ...any) (any, error){"geodist": geodist},
+    Operators: map[string]gparse.BinaryOperator{
+        "~=": {Prec: gparse.SamePrecAs("=="), Fn: regexMatch},
+    },
+})
 if err != nil {
     return err
 }

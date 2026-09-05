@@ -7,7 +7,7 @@ import (
 
 func TestParser(t *testing.T) {
 	t.Run("one Parser parses many expressions", func(t *testing.T) {
-		p, err := NewParser()
+		p, err := NewParser(Args{})
 		assertNoErr(t, err)
 
 		cases := []struct {
@@ -36,10 +36,12 @@ func TestParser(t *testing.T) {
 			return args[0].(int) * 2, nil
 		}
 
-		p, err := NewParser(WithBuiltin("double", double))
+		p, err := NewParser(Args{
+			Builtins: map[string]func(args ...any) (any, error){"double": double},
+		})
 		assertNoErr(t, err)
 
-		// Parse twice: proves the option is not consumed by the first parse.
+		// Parse twice: proves the registration is not consumed by the first parse.
 		for range 2 {
 			expr, err := p.Parse("double(a) == 42")
 			assertNoErr(t, err)
@@ -52,20 +54,22 @@ func TestParser(t *testing.T) {
 		}
 	})
 
-	t.Run("an option error surfaces from NewParser and yields no Parser", func(t *testing.T) {
-		p, err := NewParser(WithBuiltin("true", func(args ...any) (any, error) {
-			return true, nil
-		}))
+	t.Run("an invalid Args entry surfaces from NewParser and yields no Parser", func(t *testing.T) {
+		p, err := NewParser(Args{
+			Builtins: map[string]func(args ...any) (any, error){
+				"true": func(args ...any) (any, error) { return true, nil },
+			},
+		})
 		if err == nil {
 			t.Fatalf("expected a name-collision error from NewParser")
 		}
 		if p != nil {
-			t.Fatalf("expected a nil Parser on option error, got %v", p)
+			t.Fatalf("expected a nil Parser on an Args error, got %v", p)
 		}
 	})
 
 	t.Run("ParseExpr exposes the type-agnostic core surface", func(t *testing.T) {
-		p, err := NewParser()
+		p, err := NewParser(Args{})
 		assertNoErr(t, err)
 
 		expr, err := p.ParseExpr("a + b")
@@ -82,9 +86,11 @@ func TestParser(t *testing.T) {
 	// parse path only reads it, so many goroutines may share one *Parser. Run
 	// with -race to make a data race a test failure.
 	t.Run("concurrent parses on one Parser are race-free", func(t *testing.T) {
-		p, err := NewParser(WithBuiltin("double", func(args ...any) (any, error) {
-			return args[0].(int) * 2, nil
-		}))
+		p, err := NewParser(Args{
+			Builtins: map[string]func(args ...any) (any, error){
+				"double": func(args ...any) (any, error) { return args[0].(int) * 2, nil },
+			},
+		})
 		assertNoErr(t, err)
 
 		var wg sync.WaitGroup

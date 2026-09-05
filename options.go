@@ -1,21 +1,109 @@
 package gparse
 
 import (
+	"maps"
 	"math"
+	"slices"
 	"unicode"
 )
 
-// Option overlays a per-call custom entry onto the registry a single Parse call
-// resolves against. Options run in order before parsing; returning an error
-// aborts the Parse (see Parse). They never touch the package-level defaults —
-// an option that writes to a shared map copies it first (see copyBuiltins), so
-// custom entries stay isolated to the call that registered them.
-type Option func(*registry) error
+// Args declares the custom builtins and operators a parse resolves against, on
+// top of the package defaults. The zero value Args{} means "defaults only", so
+// a caller with nothing to register passes it as-is. Every field is a map
+// keyed by the name or symbol it registers, which gives godoc one obvious
+// place listing everything that can be passed.
+//
+// Entries overlay a registry seeded from the package defaults; nothing
+// process-global is mutated — a field that writes to a shared map copies it
+// first (see copyBuiltins) — so custom entries stay isolated to the
+// Parser/Parse call that registered them. A key that collides with a default
+// (or with a key from another Args field) is an error, surfaced from
+// NewParser/Parse: shadowing is a footgun, so collisions fail loudly.
+type Args struct {
+	// Builtins registers variadic callables by name inside expressions, e.g.
+	// {"geodist": geodist} enables geodist(a, b). Each function takes its
+	// arguments as native Go values (int/float/string/bool/[]any/
+	// map[string]any/nil) and returns one; gparse boxes/unboxes across the
+	// token boundary (see box and unbox). A name that collides with a default
+	// builtin (like len) or with a reserved keyword is an error.
+	Builtins map[string]func(args ...any) (any, error)
+
+	// Operators registers binary infix operator symbols, e.g.
+	// {"~=": {Prec: SamePrecAs("=="), Fn: approxEqual}} enables a ~= b.
+	//
+	// A symbol may use a novel rune (e.g. ~): the rune set the lexer scans
+	// against is derived per registry, so registering the operator makes it
+	// lex. Every rune of the symbol must be a legal operator character — it
+	// may not be a digit, letter, space, or one of the token-starting
+	// characters (see opStartingChars) the lexer treats as an operator
+	// boundary; otherwise the symbol could never be scanned back out and
+	// registration fails. A symbol that collides with an existing operator is
+	// an error.
+	Operators map[string]BinaryOperator
+
+	// LeftUnary registers prefix operator symbols, e.g. {"¬": logicalNot}
+	// enables ¬a. Operand and result cross the same native-value boundary as
+	// Builtins, and symbols obey the same rune rules as Operators. All custom
+	// prefix operators bind at the built-in prefix level (see leftUnaryPrec).
+	LeftUnary map[string]func(a any) (any, error)
+
+	// RightUnary registers postfix operator symbols, e.g. {"!": factorial}
+	// enables a!, under the same boundary and rune rules as LeftUnary. All
+	// custom postfix operators bind at the built-in postfix level (see
+	// rightUnaryPrec). A symbol may not appear in both LeftUnary and
+	// RightUnary: the two roles share the bare-sym precedence entry the lexer
+	// keys on, and handleOp resolves prefix vs postfix purely by position, so
+	// a dual registration would give one role an incoherent precedence.
+	RightUnary map[string]func(a any) (any, error)
+}
+
+// BinaryOperator is one Args.Operators entry: a binary infix operator's
+// precedence and implementation. (It is not named Operator because that name
+// is taken by the internal Token-level operator shape in operators.go.)
+type BinaryOperator struct {
+	// Prec is the operator's precedence: Level for a raw numeric level, or
+	// SamePrecAs to borrow an existing symbol's level. The zero value is
+	// Level(0), which binds tighter than every built-in — set it explicitly.
+	Prec Prec
+	// Fn implements the operator over both operands as native Go values
+	// (int/float/string/bool/[]any/map[string]any/nil), returning one; gparse
+	// boxes/unboxes across the token boundary (see box and unbox).
+	Fn func(a, b any) (any, error)
+}
+
+// applyArgs overlays args onto reg, validating every entry. Registration
+// order is fixed — builtins, then binary operators, then prefix, then postfix
+// — and each map's keys are walked in sorted order, so which error surfaces
+// first is deterministic even though Go maps iterate in random order.
+func (reg *registry) applyArgs(args Args) error {
+	for _, name := range slices.Sorted(maps.Keys(args.Builtins)) {
+		if err := reg.registerBuiltin(name, args.Builtins[name]); err != nil {
+			return err
+		}
+	}
+
+	if err := reg.registerBinaryOps(args.Operators); err != nil {
+		return err
+	}
+
+	for _, sym := range slices.Sorted(maps.Keys(args.LeftUnary)) {
+		if err := reg.registerLeftUnary(sym, args.LeftUnary[sym]); err != nil {
+			return err
+		}
+	}
+
+	for _, sym := range slices.Sorted(maps.Keys(args.RightUnary)) {
+		if err := reg.registerRightUnary(sym, args.RightUnary[sym]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // copyBuiltins ensures reg.builtins is a copy owned by this registry before it
 // is written to. defaultRegistry aliases the package-level builtinFunctions map
 // by reference, so writing to it directly would leak custom entries into every
-// other caller; the first mutating option copies it lazily instead.
+// other caller; the first mutating registration copies it lazily instead.
 func (reg *registry) copyBuiltins() {
 	if reg.builtinsCopied {
 		return
@@ -29,47 +117,42 @@ func (reg *registry) copyBuiltins() {
 	reg.builtinsCopied = true
 }
 
-// WithBuiltin registers a variadic builtin callable by name inside expressions,
-// e.g. WithBuiltin("geodist", geodist) enables geodist(a, b). The function takes
-// its arguments as native Go values (int/float/string/bool/[]any/map[string]any/
-// nil) and returns one; gparse boxes/unboxes across the token boundary (see box
-// and unbox). Registering a name that already exists (a default like len, or one
-// added by an earlier option) is an error, surfaced from Parse — shadowing is a
-// footgun, so collisions fail loudly.
-func WithBuiltin(name string, fn func(args ...any) (any, error)) Option {
-	return func(reg *registry) error {
-		if _, exists := reg.builtins[name]; exists {
-			return ParserErr("builtin already registered", map[string]any{
-				"name": name,
-			})
-		}
-
-		// A name that lexes as a reserved literal (e.g. true/false) or a
-		// reserved-word parser can never resolve to a builtin, so accepting it
-		// would register a dead function — reject it to keep the collision
-		// promise honest instead of failing silently at eval time.
-		if _, reserved := reservedKeywords[name]; reserved {
-			return ParserErr("builtin name is a reserved keyword", map[string]any{
-				"name": name,
-			})
-		}
-		if _, reserved := reservedWordParsers[name]; reserved {
-			return ParserErr("builtin name is a reserved word", map[string]any{
-				"name": name,
-			})
-		}
-
-		reg.copyBuiltins()
-		reg.builtins[name] = wrapBuiltin(name, fn)
-		return nil
+// registerBuiltin registers one Args.Builtins entry. Registering a name that
+// already exists (a default like len) is an error, surfaced from
+// NewParser/Parse — shadowing is a footgun, so collisions fail loudly.
+func (reg *registry) registerBuiltin(name string, fn func(args ...any) (any, error)) error {
+	if _, exists := reg.builtins[name]; exists {
+		return ParserErr("builtin already registered", map[string]any{
+			"name": name,
+		})
 	}
+
+	// A name that lexes as a reserved literal (e.g. true/false) or a
+	// reserved-word parser can never resolve to a builtin, so accepting it
+	// would register a dead function — reject it to keep the collision
+	// promise honest instead of failing silently at eval time.
+	if _, reserved := reservedKeywords[name]; reserved {
+		return ParserErr("builtin name is a reserved keyword", map[string]any{
+			"name": name,
+		})
+	}
+	if _, reserved := reservedWordParsers[name]; reserved {
+		return ParserErr("builtin name is a reserved word", map[string]any{
+			"name": name,
+		})
+	}
+
+	reg.copyBuiltins()
+	reg.builtins[name] = wrapBuiltin(name, fn)
+	return nil
 }
 
-// Prec is a custom operator's precedence, passed to WithOperator. Build one
-// with Level for a raw numeric level or with SamePrecAs to borrow an existing
-// symbol's level. It is resolved against the registry at option-application
-// time (see resolve) so SamePrecAs can name a built-in — or an operator added
-// by an earlier option — without the caller knowing its numeric level.
+// Prec is a custom operator's precedence, set on BinaryOperator.Prec. Build
+// one with Level for a raw numeric level or with SamePrecAs to borrow an
+// existing symbol's level. It is resolved against the registry when the Args
+// are applied (see registerBinaryOps) so SamePrecAs can name a built-in — or
+// another operator in the same Args.Operators map — without the caller
+// knowing its numeric level.
 type Prec struct {
 	level int
 	// ref, when non-empty, names the symbol whose level this precedence borrows;
@@ -79,55 +162,32 @@ type Prec struct {
 
 // Level is the precedence of a custom operator as a raw numeric level (lower
 // binds tighter; see the built-in levels in opPrecedence, e.g. == is 10, + is
-// 6), e.g. WithOperator("~=", Level(10), approxEqual).
+// 6), e.g. BinaryOperator{Prec: Level(10), Fn: approxEqual}.
 func Level(level int) Prec {
 	return Prec{level: level}
 }
 
 // SamePrecAs is the precedence of a custom operator borrowed from an existing
 // symbol, so a caller can say "bind like ==" instead of hard-coding a level,
-// e.g. WithOperator("~=", SamePrecAs("=="), approxEqual). existingSym may be a
-// built-in or an operator registered by an earlier option; an unknown symbol is
-// an error, surfaced from Parse.
+// e.g. BinaryOperator{Prec: SamePrecAs("=="), Fn: approxEqual}. existingSym
+// may be a built-in or another operator in the same Args.Operators map; an
+// unknown symbol (or a cycle of references) is an error, surfaced from
+// NewParser/Parse.
 func SamePrecAs(existingSym string) Prec {
 	return Prec{ref: existingSym}
 }
 
-// resolve returns the numeric precedence level, looking ref up in reg.prec when
-// SamePrecAs was used. An unknown ref is an error rather than a silent default,
-// so a typo'd symbol fails loudly at option-application time.
-func (p Prec) resolve(reg *registry) (int, error) {
-	if p.ref == "" {
-		return p.level, nil
-	}
-
-	level, exists := reg.prec[p.ref]
-	if !exists {
-		return 0, ParserErr("SamePrecAs references an unknown symbol", map[string]any{
-			"symbol": p.ref,
-		})
-	}
-	return level, nil
-}
-
-// WithOperator registers a binary infix operator symbol callable inside
-// expressions, e.g. WithOperator("~=", Level(10), approxEqual) enables a ~= b.
-// prec sets the operator's precedence, either a raw level (Level) or one
-// borrowed from an existing symbol (SamePrecAs). fn takes both operands as
-// native Go values (int/float/string/bool/[]any/map[string]any/nil) and returns
-// one; gparse boxes/unboxes across the token boundary (see box and unbox).
-//
-// The symbol may use a novel rune (e.g. ~): the rune set the lexer scans
-// against is derived per registry, so registering the operator makes it lex.
-// Every rune of the symbol must be a legal operator character — it may not be a
-// digit, letter, space, or one of the token-starting characters (see
-// opStartingChars) the lexer treats as an operator boundary; otherwise the
-// symbol could never be scanned back out and registration fails.
-//
-// Registering a symbol that collides with an existing operator (a built-in like
-// == or one added by an earlier option) is an error, surfaced from Parse.
-func WithOperator(sym string, prec Prec, fn func(a, b any) (any, error)) Option {
-	return func(reg *registry) error {
+// registerBinaryOps registers every Args.Operators entry. Symbols and
+// collisions are validated up front, then Level-based entries register
+// immediately while SamePrecAs entries are set aside and resolved in as many
+// passes as it takes, so a reference to another entry of the same map — even
+// through a chain — works regardless of Go's random map order. When a full
+// pass resolves nothing, the stuck references can never resolve: each one
+// either names another stuck symbol (a reference cycle) or nothing at all,
+// and erroring loudly beats a silent default.
+func (reg *registry) registerBinaryOps(ops map[string]BinaryOperator) error {
+	var pending []string
+	for _, sym := range slices.Sorted(maps.Keys(ops)) {
 		if err := validateOpSymbol(sym); err != nil {
 			return err
 		}
@@ -143,69 +203,92 @@ func WithOperator(sym string, prec Prec, fn func(a, b any) (any, error)) Option 
 			})
 		}
 
-		level, err := prec.resolve(reg)
-		if err != nil {
-			return err
+		if ops[sym].Prec.ref != "" {
+			pending = append(pending, sym)
+			continue
+		}
+		reg.registerBinaryOp(sym, ops[sym].Prec.level, ops[sym].Fn)
+	}
+
+	for len(pending) > 0 {
+		var unresolved []string
+		for _, sym := range pending {
+			level, exists := reg.prec[ops[sym].Prec.ref]
+			if !exists {
+				unresolved = append(unresolved, sym)
+				continue
+			}
+			reg.registerBinaryOp(sym, level, ops[sym].Fn)
 		}
 
-		reg.copyOps()
-		reg.copyPrec()
-		reg.ops[opToken(sym)] = wrapOperator(sym, fn)
-		reg.prec[sym] = level
-		registerOpRunes(reg, sym)
-		return nil
+		if len(unresolved) == len(pending) {
+			sym := unresolved[0]
+			ref := ops[sym].Prec.ref
+			if slices.Contains(unresolved, ref) {
+				return ParserErr("SamePrecAs references form a cycle", map[string]any{
+					"symbol": sym,
+					"ref":    ref,
+				})
+			}
+			return ParserErr("SamePrecAs references an unknown symbol", map[string]any{
+				"symbol": ref,
+			})
+		}
+		pending = unresolved
 	}
+	return nil
 }
 
-// WithLeftUnary registers a left-unary (prefix) operator symbol callable inside
-// expressions, e.g. WithLeftUnary("¬", logicalNot) enables ¬a. fn takes the
-// single operand as a native Go value (int/float/string/bool/[]any/
-// map[string]any/nil) and returns one; gparse boxes/unboxes across the token
-// boundary (see box and unbox).
+// registerBinaryOp writes one validated binary operator into the registry,
+// copying the shared default maps first so custom entries never leak into the
+// package-level globals.
+func (reg *registry) registerBinaryOp(sym string, level int, fn func(a, b any) (any, error)) {
+	reg.copyOps()
+	reg.copyPrec()
+	reg.ops[opToken(sym)] = wrapOperator(sym, fn)
+	reg.prec[sym] = level
+	registerOpRunes(reg, sym)
+}
+
+// registerLeftUnary registers one Args.LeftUnary entry.
 //
 // Per the rpn_builder convention, a left-unary operator is keyed under "L"+sym
 // in the precedence table (the built-ins L-, L+ and L! do the same), while its
 // Operator is keyed under the bare sym in ops — the RPN builder normalizes the
 // "L" prefix away before dispatch (see normalizeOp). The novel-rune, copy-on-
-// write and validation discipline mirrors WithOperator.
+// write and validation discipline mirrors registerBinaryOps.
 //
 // Registering a symbol whose "L"+sym key collides with an existing unary
-// operator is an error, surfaced from Parse.
-func WithLeftUnary(sym string, fn func(a any) (any, error)) Option {
-	return func(reg *registry) error {
-		if err := validateOpSymbol(sym); err != nil {
-			return err
-		}
-
-		// A left-unary needs two precedence entries, mirroring the built-in
-		// unaries (!, -, + all carry both a bare and an "L"-prefixed level): the
-		// bare sym is what the lexer checks to recognize the symbol as a known
-		// operator (see the reg.prec[op] gate in parse), and "L"+sym is what the
-		// RPN builder checks to dispatch it as a prefix (see handleOp). Reject if
-		// either key is taken so a collision fails loudly instead of silently
-		// overwriting a built-in's precedence.
-		if err := validateUnarySymbol(reg, sym, "L"); err != nil {
-			return err
-		}
-
-		reg.copyOps()
-		reg.copyPrec()
-		// The Operator is keyed under the bare sym: handleLeftUnary pushes
-		// "L"+sym onto the op stack, and normalizeOp strips the "L" before the
-		// RPN op token is emitted, so eval resolves ops[sym].
-		reg.ops[opToken(sym)] = wrapLeftUnary(sym, fn)
-		reg.prec[sym] = leftUnaryPrec
-		reg.prec["L"+sym] = leftUnaryPrec
-		registerOpRunes(reg, sym)
-		return nil
+// operator is an error, surfaced from NewParser/Parse.
+func (reg *registry) registerLeftUnary(sym string, fn func(a any) (any, error)) error {
+	if err := validateOpSymbol(sym); err != nil {
+		return err
 	}
+
+	// A left-unary needs two precedence entries, mirroring the built-in
+	// unaries (!, -, + all carry both a bare and an "L"-prefixed level): the
+	// bare sym is what the lexer checks to recognize the symbol as a known
+	// operator (see the reg.prec[op] gate in parse), and "L"+sym is what the
+	// RPN builder checks to dispatch it as a prefix (see handleOp). Reject if
+	// either key is taken so a collision fails loudly instead of silently
+	// overwriting a built-in's precedence.
+	if err := validateUnarySymbol(reg, sym, "L"); err != nil {
+		return err
+	}
+
+	reg.copyOps()
+	reg.copyPrec()
+	// The Operator is keyed under the bare sym: handleLeftUnary pushes
+	// "L"+sym onto the op stack, and normalizeOp strips the "L" before the
+	// RPN op token is emitted, so eval resolves ops[sym].
+	reg.ops[opToken(sym)] = wrapLeftUnary(sym, fn)
+	reg.prec[sym] = leftUnaryPrec
+	reg.prec["L"+sym] = leftUnaryPrec
+	registerOpRunes(reg, sym)
+	return nil
 }
 
-// WithRightUnary registers a right-unary (postfix) operator symbol callable
-// inside expressions, e.g. WithRightUnary("!", factorial) enables a!. fn takes
-// the single operand as a native Go value (int/float/string/bool/[]any/
-// map[string]any/nil) and returns one; gparse boxes/unboxes across the token
-// boundary (see box and unbox).
+// registerRightUnary registers one Args.RightUnary entry.
 //
 // Per the rpn_builder convention, a right-unary operator is keyed under "R"+sym
 // in the precedence table, while its Operator is keyed under the bare sym in
@@ -214,35 +297,30 @@ func WithLeftUnary(sym string, fn func(a any) (any, error)) Option {
 // "R" prefix before dispatch, and handleRightUnary places the operand as the
 // left token with a unaryPlaceholderToken on the right (mirror of the prefix
 // case). The novel-rune, copy-on-write and validation discipline mirrors
-// WithLeftUnary.
+// registerLeftUnary.
 //
-// A symbol may not be registered as both left- and right-unary: the two roles
-// share the bare-sym precedence entry the lexer keys on, and handleOp resolves
-// prefix vs postfix purely by position, so a dual registration would give one
-// role an incoherent precedence. Registering a symbol whose "R"+sym key (or its
-// reciprocal "L"+sym / bare-sym binary key) collides with an existing operator
-// is an error, surfaced from Parse.
-func WithRightUnary(sym string, fn func(a any) (any, error)) Option {
-	return func(reg *registry) error {
-		if err := validateOpSymbol(sym); err != nil {
-			return err
-		}
-
-		if err := validateUnarySymbol(reg, sym, "R"); err != nil {
-			return err
-		}
-
-		reg.copyOps()
-		reg.copyPrec()
-		// The Operator is keyed under the bare sym: handleRightUnary pushes
-		// "R"+sym onto the op stack, and normalizeOp strips the "R" before the
-		// RPN op token is emitted, so eval resolves ops[sym].
-		reg.ops[opToken(sym)] = wrapRightUnary(sym, fn)
-		reg.prec[sym] = rightUnaryPrec
-		reg.prec["R"+sym] = rightUnaryPrec
-		registerOpRunes(reg, sym)
-		return nil
+// Registering a symbol whose "R"+sym key (or its reciprocal "L"+sym / bare-sym
+// binary key) collides with an existing operator is an error, surfaced from
+// NewParser/Parse.
+func (reg *registry) registerRightUnary(sym string, fn func(a any) (any, error)) error {
+	if err := validateOpSymbol(sym); err != nil {
+		return err
 	}
+
+	if err := validateUnarySymbol(reg, sym, "R"); err != nil {
+		return err
+	}
+
+	reg.copyOps()
+	reg.copyPrec()
+	// The Operator is keyed under the bare sym: handleRightUnary pushes
+	// "R"+sym onto the op stack, and normalizeOp strips the "R" before the
+	// RPN op token is emitted, so eval resolves ops[sym].
+	reg.ops[opToken(sym)] = wrapRightUnary(sym, fn)
+	reg.prec[sym] = rightUnaryPrec
+	reg.prec["R"+sym] = rightUnaryPrec
+	registerOpRunes(reg, sym)
+	return nil
 }
 
 // validateUnarySymbol rejects a unary operator registration whose keys collide
@@ -293,7 +371,7 @@ const rightUnaryPrec = 2
 
 // validateOpSymbol reports whether sym is a usable custom operator symbol: it
 // must be non-empty and every rune must be a legal operator character (see
-// isValidOpRune). Shared by WithOperator, WithLeftUnary and WithRightUnary.
+// isValidOpRune). Shared by the binary, prefix and postfix registrations.
 func validateOpSymbol(sym string) error {
 	if sym == "" {
 		return ParserErr("operator symbol is empty", nil)

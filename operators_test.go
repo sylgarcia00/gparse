@@ -43,7 +43,7 @@ func TestArithmeticThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			rawJSON, err := json.Marshal(test.vars)
@@ -77,7 +77,7 @@ func TestFloatLiteralLexing(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -112,7 +112,7 @@ func TestBoolEqualityThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			rawJSON, err := json.Marshal(test.vars)
@@ -131,7 +131,7 @@ func TestBoolEqualityThroughParse(t *testing.T) {
 // TestBoolComparedToNonBoolErrors verifies a boolean against a numeral or string
 // is an undefined operation, matching the strToken guard's semantics.
 func TestBoolComparedToNonBoolErrors(t *testing.T) {
-	expr, err := Parse("a == 1")
+	expr, err := Parse("a == 1", Args{})
 	assertNoErr(t, err)
 
 	_, err = expr.Evaluate(jsonScope(t, json.RawMessage(`{"a": true}`)))
@@ -143,7 +143,7 @@ func TestBoolComparedToNonBoolErrors(t *testing.T) {
 // TestFloatLiteralBaseError verifies a decimal point on a non-base-10 literal
 // is rejected with a clear message rather than silently splitting the token.
 func TestFloatLiteralBaseError(t *testing.T) {
-	_, err := Parse("0x1.5 == 0")
+	_, err := Parse("0x1.5 == 0", Args{})
 	if err == nil {
 		t.Fatalf("expected an error for a hex literal with a decimal point")
 	}
@@ -169,7 +169,7 @@ func TestScientificNotationLexing(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -189,7 +189,7 @@ func TestScientificNotationLexing(t *testing.T) {
 func TestScientificNotationBareE(t *testing.T) {
 	// Here `e` is a real payload field: the '1' must lex as its own int (no
 	// exponent digits follow the 'e'), then `e` resolves to 1 from the payload.
-	expr, err := Parse("1 == e")
+	expr, err := Parse("1 == e", Args{})
 	assertNoErr(t, err)
 
 	result, err := expr.Evaluate(jsonScope(t, json.RawMessage(`{"e":1}`)))
@@ -392,7 +392,7 @@ func TestComparisonThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -467,7 +467,7 @@ func TestBitwiseThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -545,7 +545,7 @@ func TestLogicalThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -584,7 +584,7 @@ func TestParenGroupingThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -600,7 +600,7 @@ func TestParenGroupingThroughParse(t *testing.T) {
 // TestUnmatchedOpenBracketError checks that an unbalanced open bracket is
 // reported as a syntax error rather than leaking a "(" into the RPN.
 func TestUnmatchedOpenBracketError(t *testing.T) {
-	_, err := Parse("(1 < 2")
+	_, err := Parse("(1 < 2", Args{})
 	if err == nil {
 		t.Fatalf("expected an error for an unmatched open bracket")
 	}
@@ -697,7 +697,7 @@ func TestStringThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -845,7 +845,7 @@ func TestNoneThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, payload))
@@ -912,7 +912,7 @@ func TestNoneTruthinessThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, payload))
@@ -945,7 +945,7 @@ func TestIndexThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -1015,7 +1015,7 @@ func TestUnaryArithmeticThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -1072,7 +1072,7 @@ func TestDotThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, payload))
@@ -1103,7 +1103,7 @@ func TestNegativePayloadNumber(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			result, err := expr.Evaluate(jsonScope(t, payload))
@@ -1121,23 +1121,23 @@ func TestNegativePayloadNumber(t *testing.T) {
 // parse-time syntax error).
 func TestDotThroughParseErrors(t *testing.T) {
 	// "." on a non-map operand: user.name is a string, so .foo on it fails.
-	expr, err := Parse(`user.name.foo == "x"`)
+	expr, err := Parse(`user.name.foo == "x"`, Args{})
 	assertNoErr(t, err)
 	_, err = expr.Evaluate(jsonScope(t, json.RawMessage(`{"user":{"name":"bob"}}`)))
 	assertErrContains(t, err, "unsupported types")
 
 	// A dangling "." with no attribute name is a syntax error at parse time.
-	_, err = Parse(`user. == 1`)
+	_, err = Parse(`user. == 1`, Args{})
 	assertErrContains(t, err, "expected an attribute name")
 
-	_, err = Parse(`user.`)
+	_, err = Parse(`user.`, Args{})
 	assertErrContains(t, err, "expected an attribute name")
 
 	// A missing attribute resolves to None (verified directly in TestDotOps);
 	// comparing None with a present value is false (not an error), so a filter
 	// predicate can test field presence. See TestNoneThroughParse for the
 	// None == None case.
-	expr, err = Parse(`user.missing == "x"`)
+	expr, err = Parse(`user.missing == "x"`, Args{})
 	assertNoErr(t, err)
 	result, err := expr.Evaluate(jsonScope(t, json.RawMessage(`{"user":{"name":"bob"}}`)))
 	assertNoErr(t, err)
@@ -1223,7 +1223,7 @@ func TestCommaThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			got, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -1242,12 +1242,12 @@ func TestCommaThroughParse(t *testing.T) {
 // parse time as an unrecognized operator. Either way a malformed tuple never
 // silently builds a short/wrong tuple.
 func TestCommaMalformedTuple(t *testing.T) {
-	expr, err := Parse("[1, 2,]")
+	expr, err := Parse("[1, 2,]", Args{})
 	assertNoErr(t, err)
 	_, err = expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
 	assertErrContains(t, err, "missing operands")
 
-	_, err = Parse("[1,,2]")
+	_, err = Parse("[1,,2]", Args{})
 	assertErrContains(t, err, "unrecognized operator")
 }
 
@@ -1314,7 +1314,7 @@ func TestColonThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			got, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
@@ -1332,17 +1332,17 @@ func TestColonThroughParse(t *testing.T) {
 // constructor; a bare value with no colon is not a KeyValuePair and the map
 // constructor rejects it.
 func TestMapLiteralErrors(t *testing.T) {
-	expr, err := Parse(`{1: 2}["1"] == 2`)
+	expr, err := Parse(`{1: 2}["1"] == 2`, Args{})
 	assertNoErr(t, err)
 	_, err = expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
 	assertErrContains(t, err, "unsupported types")
 
-	expr, err = Parse(`{"a": 1, "a": 2}["a"] == 2`)
+	expr, err = Parse(`{"a": 1, "a": 2}["a"] == 2`, Args{})
 	assertNoErr(t, err)
 	_, err = expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
 	assertErrContains(t, err, "duplicate key")
 
-	expr, err = Parse(`{"a"}["a"] == 1`)
+	expr, err = Parse(`{"a"}["a"] == 1`, Args{})
 	assertNoErr(t, err)
 	_, err = expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
 	assertErrContains(t, err, "map constructor expects")
@@ -1353,7 +1353,7 @@ func TestMapLiteralErrors(t *testing.T) {
 // closed with no operand and failed at parse). Here the observable proof is that
 // parsing succeeds and the call reaches the built-in's own arity check at
 // evaluation time instead of a bracket parse error; a genuinely zero-argument
-// call that succeeds is covered by TestWithBuiltin ("f()").
+// call that succeeds is covered by TestArgsBuiltins ("f()").
 func TestEmptyCallThroughParse(t *testing.T) {
 	// len()/type() require exactly one argument; min()/max() at least one.
 	tests := []struct {
@@ -1370,7 +1370,7 @@ func TestEmptyCallThroughParse(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := Parse(test.expr)
+			expr, err := Parse(test.expr, Args{})
 			assertNoErr(t, err)
 
 			_, err = expr.Evaluate(jsonScope(t, json.RawMessage("{}")))

@@ -10,16 +10,16 @@ import (
 // absorbed into the middle of a multi-rune operator. They serve as ending
 // characters so that expressions such as `10 *-3` don't interpret `*-` as a
 // single operator when it is actually two. A custom operator symbol may not
-// contain any of these (see WithOperator), since the lexer could not scan it.
+// contain any of these (see Args.Operators), since the lexer could not scan it.
 var opStartingChars = map[rune]bool{
 	'+': true, '-': true, '\'': true, '"': true,
 	'(': true, ')': true, '[': true, ']': true, '{': true, '}': true,
 	'_': true,
 }
 
-// Parser holds a registry frozen once from its options, so many parses reuse
+// Parser holds a registry frozen once from its Args, so many parses reuse
 // the same custom builtins/operators without re-applying (and re-validating)
-// options on every call. Build one with NewParser and call Parse/ParseExpr
+// them on every call. Build one with NewParser and call Parse/ParseExpr
 // repeatedly.
 //
 // A Parser is read-only after NewParser returns: the parse and evaluate paths
@@ -29,16 +29,14 @@ type Parser struct {
 	reg *registry
 }
 
-// NewParser applies and validates opts once against a registry seeded from the
-// package defaults, then freezes it into the returned Parser. An option that
+// NewParser applies and validates args once against a registry seeded from the
+// package defaults, then freezes it into the returned Parser. An entry that
 // fails (e.g. a name collision) surfaces its error here and no Parser is
-// returned. With no options the Parser uses the package defaults.
-func NewParser(opts ...Option) (*Parser, error) {
+// returned. The zero value Args{} yields a Parser over the pure defaults.
+func NewParser(args Args) (*Parser, error) {
 	reg := defaultRegistry()
-	for _, opt := range opts {
-		if err := opt(reg); err != nil {
-			return nil, err
-		}
+	if err := reg.applyArgs(args); err != nil {
+		return nil, err
 	}
 
 	return &Parser{reg: reg}, nil
@@ -59,17 +57,17 @@ func (p *Parser) ParseExpr(strExpr string) (Expr, error) {
 	return Expr{rpn: rpn, reg: p.reg}, err
 }
 
-// Parse compiles strExpr into a BoolExpr. Options overlay per-call custom
-// entries (e.g. WithBuiltin) onto a registry seeded from the package defaults;
-// with no options it uses the defaults, preserving the original behavior for
-// existing callers. An option that fails (e.g. a name collision) surfaces its
-// error here and no expression is returned.
+// Parse compiles strExpr into a BoolExpr. args overlays per-call custom
+// entries (e.g. Args.Builtins) onto a registry seeded from the package
+// defaults; the zero value Args{} uses the pure defaults. An entry that fails
+// (e.g. a name collision) surfaces its error here and no expression is
+// returned.
 //
 // This is the one-shot door: it builds a fresh Parser per call. To parse many
-// expressions under the same options, build a Parser once with NewParser and
+// expressions under the same Args, build a Parser once with NewParser and
 // reuse it.
-func Parse(strExpr string, opts ...Option) (BoolExpr, error) {
-	p, err := NewParser(opts...)
+func Parse(strExpr string, args Args) (BoolExpr, error) {
+	p, err := NewParser(args)
 	if err != nil {
 		return BoolExpr{}, err
 	}

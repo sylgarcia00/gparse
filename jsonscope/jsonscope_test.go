@@ -103,7 +103,7 @@ func TestEvalThroughJsonScope(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expr, func(t *testing.T) {
-			expr, err := gparse.Parse(test.expr)
+			expr, err := gparse.Parse(test.expr, gparse.Args{})
 			if err != nil {
 				t.Fatalf("Parse(%q) error: %v", test.expr, err)
 			}

@@ -12,8 +12,8 @@ type registry struct {
 
 	// builtinsCopied, opsCopied and precCopied track whether the matching map
 	// is a copy this registry owns. defaultRegistry aliases the package-level
-	// maps by reference; the first option that mutates one copies it (see the
-	// copy* helpers) so custom entries never leak into the globals.
+	// maps by reference; the first registration that mutates one copies it (see
+	// the copy* helpers) so custom entries never leak into the globals.
 	builtinsCopied bool
 	opsCopied      bool
 	precCopied     bool
@@ -41,7 +41,7 @@ func defaultRegistry() *registry {
 // copyOps ensures reg.ops is a copy owned by this registry before it is
 // written to. defaultRegistry aliases the package-level operators map by
 // reference, so writing to it directly would leak custom operators into every
-// other caller; the first mutating option copies it lazily instead.
+// other caller; the first mutating registration copies it lazily instead.
 func (reg *registry) copyOps() {
 	if reg.opsCopied {
 		return

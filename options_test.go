@@ -6,14 +6,16 @@ import (
 	"testing"
 )
 
-func TestWithBuiltin(t *testing.T) {
+func TestArgsBuiltins(t *testing.T) {
 	t.Run("registered builtin is callable and its result is boxed", func(t *testing.T) {
 		double := func(args ...any) (any, error) {
 			n := args[0].(int)
 			return n * 2, nil
 		}
 
-		expr, err := Parse("double(a) == 42", WithBuiltin("double", double))
+		expr, err := Parse("double(a) == 42", Args{
+			Builtins: map[string]func(args ...any) (any, error){"double": double},
+		})
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{"a": intToken(21)})
@@ -28,13 +30,17 @@ func TestWithBuiltin(t *testing.T) {
 		// Function token, so an empty `f()` routes through the empty-call path and
 		// invokes with no arguments — the same fix that makes len()/[]/{} parse.
 		called := false
-		expr, err := Parse("now()", WithBuiltin("now", func(args ...any) (any, error) {
-			called = true
-			if len(args) != 0 {
-				return nil, ParserErr("expected no arguments", map[string]any{"got": len(args)})
-			}
-			return true, nil
-		}))
+		expr, err := Parse("now()", Args{
+			Builtins: map[string]func(args ...any) (any, error){
+				"now": func(args ...any) (any, error) {
+					called = true
+					if len(args) != 0 {
+						return nil, ParserErr("expected no arguments", map[string]any{"got": len(args)})
+					}
+					return true, nil
+				},
+			},
+		})
 		assertNoErr(t, err)
 
 		got, err := expr.Evaluate(MapScope{})
@@ -48,34 +54,41 @@ func TestWithBuiltin(t *testing.T) {
 	})
 
 	t.Run("collision with an existing builtin surfaces an error from Parse", func(t *testing.T) {
-		_, err := Parse("len(a) == 1", WithBuiltin("len", func(args ...any) (any, error) {
-			return 0, nil
-		}))
+		_, err := Parse("len(a) == 1", Args{
+			Builtins: map[string]func(args ...any) (any, error){
+				"len": func(args ...any) (any, error) { return 0, nil },
+			},
+		})
 		assertErrContains(t, err, "builtin already registered", "len")
 	})
 
 	t.Run("a reserved keyword name is rejected", func(t *testing.T) {
-		_, err := Parse("true", WithBuiltin("true", func(args ...any) (any, error) {
-			return 0, nil
-		}))
+		_, err := Parse("true", Args{
+			Builtins: map[string]func(args ...any) (any, error){
+				"true": func(args ...any) (any, error) { return 0, nil },
+			},
+		})
 		assertErrContains(t, err, "reserved keyword", "true")
 	})
 
 	t.Run("a registered builtin does not leak into a later default Parse", func(t *testing.T) {
-		withOpt, err := Parse("custom(1) == 1", WithBuiltin("custom", func(args ...any) (any, error) {
-			return 1, nil
-		}))
+		withArgs, err := Parse("custom(1) == 1", Args{
+			Builtins: map[string]func(args ...any) (any, error){
+				"custom": func(args ...any) (any, error) { return 1, nil },
+			},
+		})
 		assertNoErr(t, err)
-		got, err := withOpt.Evaluate(MapScope{})
+		got, err := withArgs.Evaluate(MapScope{})
 		assertNoErr(t, err)
 		if !got {
 			t.Fatalf("expected custom(1) == 1 to evaluate true when registered")
 		}
 
-		// A plain Parse with no options must NOT see the custom builtin: if the
-		// option had mutated the shared globals, `custom(1)` would resolve to the
-		// registered function and evaluate; instead the call must fail at eval.
-		def, err := Parse("custom(1) == 1")
+		// A plain Parse with zero-value Args must NOT see the custom builtin: if
+		// the registration had mutated the shared globals, `custom(1)` would
+		// resolve to the registered function and evaluate; instead the call must
+		// fail at eval.
+		def, err := Parse("custom(1) == 1", Args{})
 		assertNoErr(t, err)
 		if _, err = def.Evaluate(MapScope{}); err == nil {
 			t.Fatalf("custom builtin leaked into a default Parse")
@@ -83,7 +96,7 @@ func TestWithBuiltin(t *testing.T) {
 	})
 }
 
-func TestWithOperator(t *testing.T) {
+func TestArgsOperators(t *testing.T) {
 	// approxEqual: true when two numbers are within 0.5 of each other. Used to
 	// prove a custom binary operator both lexes and evaluates end-to-end.
 	approxEqual := func(a, b any) (any, error) {
@@ -103,7 +116,9 @@ func TestWithOperator(t *testing.T) {
 		// ~= uses the novel rune '~', absent from every built-in operator. It
 		// can only lex if opRunes is derived per registry (divergence #2): this
 		// asserts both the lexing and the evaluation.
-		expr, err := Parse("a ~= b", WithOperator("~=", Level(10), approxEqual))
+		expr, err := Parse("a ~= b", Args{
+			Operators: map[string]BinaryOperator{"~=": {Prec: Level(10), Fn: approxEqual}},
+		})
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{"a": floatToken(1.2), "b": floatToken(1.0)})
@@ -122,7 +137,9 @@ func TestWithOperator(t *testing.T) {
 	t.Run("precedence is honored relative to built-in operators", func(t *testing.T) {
 		// plus binds tighter (prec 6) than ~= (prec 10), so a ~= b + c groups as
 		// a ~= (b + c): 3 ~= (1 + 2) -> 3 ~= 3 -> true.
-		expr, err := Parse("a ~= b + c", WithOperator("~=", Level(10), approxEqual))
+		expr, err := Parse("a ~= b + c", Args{
+			Operators: map[string]BinaryOperator{"~=": {Prec: Level(10), Fn: approxEqual}},
+		})
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{
@@ -137,7 +154,9 @@ func TestWithOperator(t *testing.T) {
 	t.Run("SamePrecAs borrows an existing symbol's precedence", func(t *testing.T) {
 		// SamePrecAs("==") resolves to prec 10, so ~= binds looser than + (prec
 		// 6): a ~= b + c groups as a ~= (b + c), 3 ~= (1 + 2) -> 3 ~= 3 -> true.
-		expr, err := Parse("a ~= b + c", WithOperator("~=", SamePrecAs("=="), approxEqual))
+		expr, err := Parse("a ~= b + c", Args{
+			Operators: map[string]BinaryOperator{"~=": {Prec: SamePrecAs("=="), Fn: approxEqual}},
+		})
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{
@@ -149,13 +168,53 @@ func TestWithOperator(t *testing.T) {
 		}
 	})
 
+	t.Run("SamePrecAs may reference another operator of the same Args", func(t *testing.T) {
+		// ~= borrows from ≈ which borrows from ==, forming a reference chain
+		// between two entries of the same map. Sorted registration walks ~=
+		// before ≈ ('~' < '≈' in byte order), so ~='s reference is still
+		// unresolvable on the first pass — this pins the multi-pass,
+		// order-independent resolution.
+		expr, err := Parse("a ~= b + c", Args{
+			Operators: map[string]BinaryOperator{
+				"~=": {Prec: SamePrecAs("≈"), Fn: approxEqual},
+				"≈":  {Prec: SamePrecAs("=="), Fn: approxEqual},
+			},
+		})
+		assertNoErr(t, err)
+
+		// ~= must land on ==’s prec 10, looser than + (prec 6): 3 ~= (1 + 2).
+		result, err := expr.Evaluate(MapScope{
+			"a": floatToken(3.0), "b": floatToken(1.0), "c": floatToken(2.0),
+		})
+		assertNoErr(t, err)
+		if !result {
+			t.Fatalf("expected 3 ~= (1 + 2) to be true")
+		}
+	})
+
 	t.Run("SamePrecAs referencing an unknown symbol is rejected", func(t *testing.T) {
-		_, err := Parse("a ~= b", WithOperator("~=", SamePrecAs("<nope>"), approxEqual))
+		_, err := Parse("a ~= b", Args{
+			Operators: map[string]BinaryOperator{"~=": {Prec: SamePrecAs("<nope>"), Fn: approxEqual}},
+		})
 		assertErrContains(t, err, "SamePrecAs references an unknown symbol", "<nope>")
 	})
 
+	t.Run("a SamePrecAs reference cycle is rejected", func(t *testing.T) {
+		// ~= and ≈ each borrow from the other: no pass can ever resolve either,
+		// so the registration must fail instead of looping or defaulting.
+		_, err := Parse("a ~= b", Args{
+			Operators: map[string]BinaryOperator{
+				"~=": {Prec: SamePrecAs("≈"), Fn: approxEqual},
+				"≈":  {Prec: SamePrecAs("~="), Fn: approxEqual},
+			},
+		})
+		assertErrContains(t, err, "SamePrecAs references form a cycle")
+	})
+
 	t.Run("collision with an existing operator surfaces an error from Parse", func(t *testing.T) {
-		_, err := Parse("a == b", WithOperator("==", Level(10), approxEqual))
+		_, err := Parse("a == b", Args{
+			Operators: map[string]BinaryOperator{"==": {Prec: Level(10), Fn: approxEqual}},
+		})
 		assertErrContains(t, err, "operator already registered", "==")
 	})
 
@@ -163,38 +222,46 @@ func TestWithOperator(t *testing.T) {
 		// "=" has a precedence entry but no operators entry, so a check keyed on
 		// operators alone would silently overwrite its precedence. Keying on the
 		// precedence map catches it.
-		_, err := Parse("a", WithOperator("=", Level(10), approxEqual))
+		_, err := Parse("a", Args{
+			Operators: map[string]BinaryOperator{"=": {Prec: Level(10), Fn: approxEqual}},
+		})
 		assertErrContains(t, err, "operator already registered", "=")
 	})
 
 	t.Run("an invalid symbol character is rejected", func(t *testing.T) {
-		_, err := Parse("a", WithOperator("a=", Level(10), approxEqual))
+		_, err := Parse("a", Args{
+			Operators: map[string]BinaryOperator{"a=": {Prec: Level(10), Fn: approxEqual}},
+		})
 		assertErrContains(t, err, "invalid character", "a=")
 
-		_, err = Parse("a", WithOperator("", Level(10), approxEqual))
+		_, err = Parse("a", Args{
+			Operators: map[string]BinaryOperator{"": {Prec: Level(10), Fn: approxEqual}},
+		})
 		assertErrContains(t, err, "operator symbol is empty")
 	})
 
 	t.Run("a registered operator does not leak into a later default Parse", func(t *testing.T) {
-		withOpt, err := Parse("a ~= b", WithOperator("~=", Level(10), approxEqual))
+		withArgs, err := Parse("a ~= b", Args{
+			Operators: map[string]BinaryOperator{"~=": {Prec: Level(10), Fn: approxEqual}},
+		})
 		assertNoErr(t, err)
-		got, err := withOpt.Evaluate(MapScope{"a": floatToken(1.0), "b": floatToken(1.0)})
+		got, err := withArgs.Evaluate(MapScope{"a": floatToken(1.0), "b": floatToken(1.0)})
 		assertNoErr(t, err)
 		if !got {
 			t.Fatalf("expected 1.0 ~= 1.0 to evaluate true when registered")
 		}
 
-		// A plain Parse with no options must NOT see the custom operator nor its
-		// novel rune: if the option had mutated the shared globals (ops, prec or
-		// opRunes), `a ~= b` would lex and evaluate; instead it must fail to
-		// parse because '~=' is an unknown operator.
-		if _, err = Parse("a ~= b"); err == nil {
+		// A plain Parse with zero-value Args must NOT see the custom operator nor
+		// its novel rune: if the registration had mutated the shared globals
+		// (ops, prec or opRunes), `a ~= b` would lex and evaluate; instead it
+		// must fail to parse because '~=' is an unknown operator.
+		if _, err = Parse("a ~= b", Args{}); err == nil {
 			t.Fatalf("custom operator leaked into a default Parse")
 		}
 	})
 }
 
-func TestWithLeftUnary(t *testing.T) {
+func TestArgsLeftUnary(t *testing.T) {
 	// negate: unary minus over an int operand. Used to prove a custom prefix
 	// operator both lexes and evaluates end-to-end. The '¬' rune is novel — no
 	// built-in operator uses it — so it lexes only via the opRunes overlay.
@@ -207,7 +274,9 @@ func TestWithLeftUnary(t *testing.T) {
 	}
 
 	t.Run("a novel-rune prefix operator lexes and evaluates end-to-end", func(t *testing.T) {
-		expr, err := Parse("¬a == b", WithLeftUnary("¬", negate))
+		expr, err := Parse("¬a == b", Args{
+			LeftUnary: map[string]func(a any) (any, error){"¬": negate},
+		})
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{"a": intToken(5), "b": intToken(-5)})
@@ -220,7 +289,9 @@ func TestWithLeftUnary(t *testing.T) {
 	t.Run("prefix binds tighter than the binary operator it precedes", func(t *testing.T) {
 		// ¬ has prec 3, tighter than + (prec 6), so ¬a + b groups as (¬a) + b:
 		// (¬5) + 2 -> -3.
-		expr, err := Parse("¬a + b == c", WithLeftUnary("¬", negate))
+		expr, err := Parse("¬a + b == c", Args{
+			LeftUnary: map[string]func(a any) (any, error){"¬": negate},
+		})
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{
@@ -234,38 +305,58 @@ func TestWithLeftUnary(t *testing.T) {
 
 	t.Run("collision with a built-in unary operator surfaces an error from Parse", func(t *testing.T) {
 		// "!" is the built-in left-unary logical negation, keyed under "L!".
-		_, err := Parse("!a", WithLeftUnary("!", negate))
+		_, err := Parse("!a", Args{
+			LeftUnary: map[string]func(a any) (any, error){"!": negate},
+		})
 		assertErrContains(t, err, "unary operator already registered", "!")
 	})
 
+	t.Run("collision with a binary operator of the same Args surfaces an error", func(t *testing.T) {
+		// Binary operators register before prefix ones (see applyArgs), so the
+		// prefix registration is the one that trips over the shared bare-sym key.
+		_, err := Parse("a", Args{
+			Operators: map[string]BinaryOperator{"~": {Prec: Level(10), Fn: func(a, b any) (any, error) {
+				return a, nil
+			}}},
+			LeftUnary: map[string]func(a any) (any, error){"~": negate},
+		})
+		assertErrContains(t, err, "operator already registered", "~")
+	})
+
 	t.Run("an invalid symbol character is rejected", func(t *testing.T) {
-		_, err := Parse("a", WithLeftUnary("a¬", negate))
+		_, err := Parse("a", Args{
+			LeftUnary: map[string]func(a any) (any, error){"a¬": negate},
+		})
 		assertErrContains(t, err, "invalid character", "a¬")
 
-		_, err = Parse("a", WithLeftUnary("", negate))
+		_, err = Parse("a", Args{
+			LeftUnary: map[string]func(a any) (any, error){"": negate},
+		})
 		assertErrContains(t, err, "operator symbol is empty")
 	})
 
 	t.Run("a registered prefix operator does not leak into a later default Parse", func(t *testing.T) {
-		withOpt, err := Parse("¬a == b", WithLeftUnary("¬", negate))
+		withArgs, err := Parse("¬a == b", Args{
+			LeftUnary: map[string]func(a any) (any, error){"¬": negate},
+		})
 		assertNoErr(t, err)
-		got, err := withOpt.Evaluate(MapScope{"a": intToken(1), "b": intToken(-1)})
+		got, err := withArgs.Evaluate(MapScope{"a": intToken(1), "b": intToken(-1)})
 		assertNoErr(t, err)
 		if !got {
 			t.Fatalf("expected ¬1 == -1 to evaluate true when registered")
 		}
 
-		// A plain Parse with no options must NOT see the custom prefix operator
-		// nor its novel rune: if the option had mutated the shared globals (ops,
-		// prec or opRunes), `¬a` would lex and evaluate; instead it must fail to
-		// parse because '¬' is an unknown operator.
-		if _, err = Parse("¬a == b"); err == nil {
+		// A plain Parse with zero-value Args must NOT see the custom prefix
+		// operator nor its novel rune: if the registration had mutated the shared
+		// globals (ops, prec or opRunes), `¬a` would lex and evaluate; instead it
+		// must fail to parse because '¬' is an unknown operator.
+		if _, err = Parse("¬a == b", Args{}); err == nil {
 			t.Fatalf("custom prefix operator leaked into a default Parse")
 		}
 	})
 }
 
-func TestWithRightUnary(t *testing.T) {
+func TestArgsRightUnary(t *testing.T) {
 	// fact: postfix factorial over an int operand. Proves a custom postfix
 	// operator lexes and evaluates end-to-end. The '°' rune is novel — no
 	// built-in operator uses it — so it lexes only via the opRunes overlay.
@@ -282,7 +373,9 @@ func TestWithRightUnary(t *testing.T) {
 	}
 
 	t.Run("a novel-rune postfix operator lexes and evaluates end-to-end", func(t *testing.T) {
-		expr, err := Parse("a° == b", WithRightUnary("°", fact))
+		expr, err := Parse("a° == b", Args{
+			RightUnary: map[string]func(a any) (any, error){"°": fact},
+		})
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{"a": intToken(4), "b": intToken(24)})
@@ -295,7 +388,9 @@ func TestWithRightUnary(t *testing.T) {
 	t.Run("postfix binds tighter than the binary operator it follows", func(t *testing.T) {
 		// ° has prec 2, tighter than + (prec 6), so a + b° groups as a + (b°):
 		// 2 + (3°) -> 2 + 6 -> 8.
-		expr, err := Parse("a + b° == c", WithRightUnary("°", fact))
+		expr, err := Parse("a + b° == c", Args{
+			RightUnary: map[string]func(a any) (any, error){"°": fact},
+		})
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{
@@ -310,7 +405,9 @@ func TestWithRightUnary(t *testing.T) {
 	t.Run("postfix binds tighter than a prefix operator", func(t *testing.T) {
 		// ° has prec 2, tighter than the built-in prefix minus (prec 3), so -a°
 		// groups as -(a°): -(3°) -> -6.
-		expr, err := Parse("-a° == b", WithRightUnary("°", fact))
+		expr, err := Parse("-a° == b", Args{
+			RightUnary: map[string]func(a any) (any, error){"°": fact},
+		})
 		assertNoErr(t, err)
 
 		result, err := expr.Evaluate(MapScope{"a": intToken(3), "b": intToken(-6)})
@@ -323,52 +420,62 @@ func TestWithRightUnary(t *testing.T) {
 	t.Run("a symbol cannot be both left- and right-unary", func(t *testing.T) {
 		negate := func(a any) (any, error) { return a, nil }
 
-		// Registering ~ as left-unary then attempting right-unary must fail: the
-		// two roles share the bare-sym precedence and handleOp resolves the role
-		// by position, so a dual registration is incoherent.
-		_, err := Parse("a", WithLeftUnary("~", negate), WithRightUnary("~", fact))
-		assertErrContains(t, err, "opposite unary", "~")
-
-		// And the reverse direction: right-unary first, then left-unary.
-		_, err = Parse("a", WithRightUnary("~", fact), WithLeftUnary("~", negate))
+		// Registering ~ in both LeftUnary and RightUnary must fail: the two roles
+		// share the bare-sym precedence and handleOp resolves the role by
+		// position, so a dual registration is incoherent. applyArgs registers
+		// prefix before postfix, so the postfix side trips the reciprocal check.
+		_, err := Parse("a", Args{
+			LeftUnary:  map[string]func(a any) (any, error){"~": negate},
+			RightUnary: map[string]func(a any) (any, error){"~": fact},
+		})
 		assertErrContains(t, err, "opposite unary", "~")
 	})
 
 	t.Run("collision with a built-in binary operator surfaces an error from Parse", func(t *testing.T) {
 		// "==" is a built-in binary operator, so it already owns the bare-sym key.
-		_, err := Parse("a", WithRightUnary("==", fact))
+		_, err := Parse("a", Args{
+			RightUnary: map[string]func(a any) (any, error){"==": fact},
+		})
 		assertErrContains(t, err, "operator already registered", "==")
 	})
 
 	t.Run("collision with a built-in unary operator surfaces an error from Parse", func(t *testing.T) {
 		// "!" is the built-in left-unary logical negation, keyed under "L!"; its
 		// reciprocal must block a right-unary registration too.
-		_, err := Parse("a", WithRightUnary("!", fact))
+		_, err := Parse("a", Args{
+			RightUnary: map[string]func(a any) (any, error){"!": fact},
+		})
 		assertErrContains(t, err, "opposite unary", "!")
 	})
 
 	t.Run("an invalid symbol character is rejected", func(t *testing.T) {
-		_, err := Parse("a", WithRightUnary("a°", fact))
+		_, err := Parse("a", Args{
+			RightUnary: map[string]func(a any) (any, error){"a°": fact},
+		})
 		assertErrContains(t, err, "invalid character", "a°")
 
-		_, err = Parse("a", WithRightUnary("", fact))
+		_, err = Parse("a", Args{
+			RightUnary: map[string]func(a any) (any, error){"": fact},
+		})
 		assertErrContains(t, err, "operator symbol is empty")
 	})
 
 	t.Run("a registered postfix operator does not leak into a later default Parse", func(t *testing.T) {
-		withOpt, err := Parse("a° == b", WithRightUnary("°", fact))
+		withArgs, err := Parse("a° == b", Args{
+			RightUnary: map[string]func(a any) (any, error){"°": fact},
+		})
 		assertNoErr(t, err)
-		got, err := withOpt.Evaluate(MapScope{"a": intToken(3), "b": intToken(6)})
+		got, err := withArgs.Evaluate(MapScope{"a": intToken(3), "b": intToken(6)})
 		assertNoErr(t, err)
 		if !got {
 			t.Fatalf("expected 3° == 6 to evaluate true when registered")
 		}
 
-		// A plain Parse with no options must NOT see the custom postfix operator
-		// nor its novel rune: if the option had mutated the shared globals (ops,
-		// prec or opRunes), `a°` would lex and evaluate; instead it must fail to
-		// parse because '°' is an unknown operator.
-		if _, err = Parse("a° == b"); err == nil {
+		// A plain Parse with zero-value Args must NOT see the custom postfix
+		// operator nor its novel rune: if the registration had mutated the shared
+		// globals (ops, prec or opRunes), `a°` would lex and evaluate; instead it
+		// must fail to parse because '°' is an unknown operator.
+		if _, err = Parse("a° == b", Args{}); err == nil {
 			t.Fatalf("custom postfix operator leaked into a default Parse")
 		}
 	})
