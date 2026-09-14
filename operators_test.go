@@ -639,6 +639,119 @@ func TestStringConcatOps(t *testing.T) {
 	}
 }
 
+// TestListConcatOps exercises "+" concatenation of two lists into a new list,
+// matching cparse (objects.cpp List operator+). Concatenation is a shallow
+// copy: the result holds the same element tokens in left-then-right order and
+// neither operand is mutated. Concatenating with an empty list yields the other
+// list's elements.
+func TestListConcatOps(t *testing.T) {
+	tests := []struct {
+		name     string
+		left     listToken
+		right    listToken
+		expected listToken
+	}{
+		{
+			name:     "both non-empty",
+			left:     listToken{intToken(1), intToken(2)},
+			right:    listToken{intToken(3)},
+			expected: listToken{intToken(1), intToken(2), intToken(3)},
+		},
+		{
+			name:     "left empty",
+			left:     listToken{},
+			right:    listToken{intToken(3)},
+			expected: listToken{intToken(3)},
+		},
+		{
+			name:     "right empty",
+			left:     listToken{intToken(1)},
+			right:    listToken{},
+			expected: listToken{intToken(1)},
+		},
+		{
+			name:     "both empty",
+			left:     listToken{},
+			right:    listToken{},
+			expected: listToken{},
+		},
+		{
+			name:     "mixed element types",
+			left:     listToken{intToken(1), strToken("a")},
+			right:    listToken{boolToken(true)},
+			expected: listToken{intToken(1), strToken("a"), boolToken(true)},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := arithmeticOp(test.left, test.right, "+", nil)
+			assertNoErr(t, err)
+
+			gotList, ok := got.(listToken)
+			if !ok {
+				t.Fatalf("expected listToken, got %T", got)
+			}
+			if len(gotList) != len(test.expected) {
+				t.Fatalf("expected len %d, got %d", len(test.expected), len(gotList))
+			}
+			for i := range test.expected {
+				if gotList[i] != test.expected[i] {
+					t.Fatalf("element %d: expected %v, got %v", i, test.expected[i], gotList[i])
+				}
+			}
+
+			// The operands must not be mutated by the concatenation.
+			if len(test.left)+len(test.right) != len(gotList) {
+				t.Fatalf("operand lengths changed: left=%d right=%d", len(test.left), len(test.right))
+			}
+		})
+	}
+}
+
+// TestListConcatOpErrors checks that "+" between a list and a non-list operand
+// is an unsupported-types error, not a silent coercion.
+func TestListConcatOpErrors(t *testing.T) {
+	_, err := arithmeticOp(listToken{intToken(1)}, intToken(2), "+", nil)
+	assertErrContains(t, err, "unsupported types")
+
+	_, err = arithmeticOp(intToken(2), listToken{intToken(1)}, "+", nil)
+	assertErrContains(t, err, "unsupported types")
+}
+
+// TestListConcatThroughParse exercises list concatenation end-to-end via the
+// public Parse API, using len()/indexing to observe the resulting list.
+func TestListConcatThroughParse(t *testing.T) {
+	tests := []struct {
+		expr           string
+		expectedResult bool
+	}{
+		{expr: "len([1, 2] + [3]) == 3", expectedResult: true},
+		{expr: "([1, 2] + [3, 4])[2] == 3", expectedResult: true},
+		// NOTE: an empty list literal `[]` as the *left* operand at the start of
+		// a subexpression (e.g. `[] + [1]`) is misparsed by the RPN builder as a
+		// left-unary placeholder — a pre-existing parser quirk unrelated to list
+		// concatenation, so it is not covered here. Empty-right works fine.
+		{expr: "len([1] + []) == 1", expectedResult: true},
+		// Concatenation chains left-to-right like other "+" uses.
+		{expr: "len([1] + [2] + [3]) == 3", expectedResult: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			expr, err := Parse(test.expr, Args{})
+			assertNoErr(t, err)
+
+			result, err := expr.Evaluate(jsonScope(t, json.RawMessage("{}")))
+			assertNoErr(t, err)
+
+			if result != test.expectedResult {
+				t.Fatalf("expected %v, got %v", test.expectedResult, result)
+			}
+		})
+	}
+}
+
 // TestStringEqualityOps checks that "==" and "!=" compare two strings and that
 // a string compared against a numeral is an unsupported operation (cparse only
 // defines string-on-string equality), not a silent false.

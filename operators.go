@@ -201,6 +201,17 @@ func arithmeticOp(t1 Token, t2 Token, op opToken, data *EvaluationData) (Token, 
 		return moduloOp(t1, t2, op)
 	}
 
+	// "+" concatenates two lists into a new list, matching cparse (objects.cpp
+	// List operator+). Any other list/non-list combination is unsupported.
+	if op == "+" {
+		if _, ok := t1.(listToken); ok {
+			return listConcatOp(t1, t2, op)
+		}
+		if _, ok := t2.(listToken); ok {
+			return listConcatOp(t1, t2, op)
+		}
+	}
+
 	// "+" concatenates when either operand is a string, matching cparse's
 	// string-on-string, string-on-number and number-on-string operations (a
 	// numeral operand is rendered through its double value: "x" + 5 -> "x5").
@@ -319,6 +330,23 @@ func moduloOp(t1 Token, t2 Token, op opToken) (Token, error) {
 	}
 
 	return intToken(i1 % i2), nil
+}
+
+// listConcatOp implements "+" concatenation of two lists, returning a new
+// listToken holding the left elements followed by the right elements. Both
+// operands must be lists; any list/non-list combination is unsupported. The
+// result is a fresh slice so neither operand is aliased or mutated.
+func listConcatOp(t1 Token, t2 Token, op opToken) (Token, error) {
+	l1, ok1 := t1.(listToken)
+	l2, ok2 := t2.(listToken)
+	if !ok1 || !ok2 {
+		return nil, unsupportedTypesErr(op, t1, t2)
+	}
+
+	result := make(listToken, 0, len(l1)+len(l2))
+	result = append(result, l1...)
+	result = append(result, l2...)
+	return result, nil
 }
 
 // concatOp implements "+" concatenation for a string operand paired with
