@@ -82,6 +82,50 @@ func TestBuiltinTypeError(t *testing.T) {
 	assertErrContains(t, err, "exactly one argument")
 }
 
+// TestBuiltinExtend exercises extend() directly: a map argument yields a fresh
+// child map linked to the original via $parent, without mutating the original.
+func TestBuiltinExtend(t *testing.T) {
+	parent := mapToken{"a": intToken(1)}
+
+	got, err := builtinExtend([]Token{parent}, nil)
+	assertNoErr(t, err)
+
+	child, ok := got.(mapToken)
+	if !ok {
+		t.Fatalf("expected a mapToken, got %T (%v)", got, got)
+	}
+
+	// The child is a distinct, initially-empty-but-linked map: its only entry is
+	// the $parent link back to the source, and the source is untouched.
+	if linked := child["$parent"]; linked == nil {
+		t.Fatalf("expected child to carry a $parent link, got none")
+	}
+	if _, shadowed := child["a"]; shadowed {
+		t.Fatalf("child should not copy parent keys, only link to them")
+	}
+	if len(parent) != 1 {
+		t.Fatalf("extend must not mutate its argument, got %v", parent)
+	}
+
+	// A variable resolves through the child up the $parent chain to the source.
+	if resolved := (varToken{"a"}).Resolve(child, nil); resolved != intToken(1) {
+		t.Fatalf("expected child to inherit a==1 via $parent, got %v", resolved)
+	}
+}
+
+// TestBuiltinExtendErrors covers a non-map argument (not extensible) and the
+// wrong argument count.
+func TestBuiltinExtendErrors(t *testing.T) {
+	_, err := builtinExtend([]Token{intToken(5)}, nil)
+	assertErrContains(t, err, "not extensible")
+
+	_, err = builtinExtend([]Token{listToken{intToken(1)}}, nil)
+	assertErrContains(t, err, "not extensible")
+
+	_, err = builtinExtend([]Token{}, nil)
+	assertErrContains(t, err, "exactly one argument")
+}
+
 // TestBuiltinsThroughParse exercises len() and type() end-to-end via the public
 // Parse API. The value-returning call is wrapped in a comparison because the
 // bool-only Evaluate entry point returns bool.
@@ -103,6 +147,8 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `type(1.5) == "float"`, payload: json.RawMessage("{}"), expectedResult: true},
 		{expr: `type(items) == "list"`, payload: json.RawMessage(`{"items":[1,2,3]}`), expectedResult: true},
 		{expr: `type(obj) == "map"`, payload: json.RawMessage(`{"obj":{"a":1}}`), expectedResult: true},
+		// extend() returns a (child) map, exercised end-to-end via type().
+		{expr: `type(extend(obj)) == "map"`, payload: json.RawMessage(`{"obj":{"a":1}}`), expectedResult: true},
 		// type() of a len() result: an int.
 		{expr: `type(len("ab")) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
 

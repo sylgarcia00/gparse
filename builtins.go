@@ -42,6 +42,8 @@ var builtinFunctions = map[string]Function{
 
 	"sum": builtinSum,
 
+	"extend": builtinExtend,
+
 	"pow": builtinPow,
 	"sin": builtinSin,
 	"cos": builtinCos,
@@ -102,6 +104,29 @@ func builtinType(args []Token, scope mapToken) (Token, error) {
 			"argument": arg,
 		})
 	}
+}
+
+// builtinExtend implements `extend(m)`: cparse's object-inheritance primitive
+// (default_extend). It requires a single map argument and returns a fresh child
+// map that inherits from it — the same $parent-linked map that getChildMap
+// builds and that variable resolution climbs (see varToken.Resolve). Writes to
+// the child shadow the parent without mutating it; reads fall through to the
+// parent on a miss. A non-map argument is a RuntimeErr, mirroring cparse's
+// "<x> is not extensible!".
+func builtinExtend(args []Token, scope mapToken) (Token, error) {
+	arg, err := singleArg("extend", args)
+	if err != nil {
+		return nil, err
+	}
+
+	m, ok := arg.(mapToken)
+	if !ok {
+		return nil, RuntimeErr("extend() argument is not extensible", map[string]any{
+			"argument": arg,
+		})
+	}
+
+	return m.getChildMap(), nil
 }
 
 // builtinMin implements `min(a, b, ...)`: the smallest of its numeral
