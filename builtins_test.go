@@ -126,6 +126,59 @@ func TestBuiltinExtendErrors(t *testing.T) {
 	assertErrContains(t, err, "exactly one argument")
 }
 
+// TestBuiltinInstanceof exercises instanceof() directly: super is a match when
+// it appears in obj's $parent chain, starting at obj's parent (not obj itself).
+// Membership is by map identity, so a structurally-equal but distinct map is not
+// a match.
+func TestBuiltinInstanceof(t *testing.T) {
+	parent := mapToken{"a": intToken(1)}
+	child := parent.getChildMap()
+	grandChild := child.getChildMap()
+	twin := mapToken{"a": intToken(1)} // same contents as parent, distinct map
+
+	tests := []struct {
+		desc     string
+		obj      Token
+		super    Token
+		expected bool
+	}{
+		{desc: "direct child is an instance of its parent", obj: child, super: parent, expected: true},
+		{desc: "grandchild is an instance of the root parent", obj: grandChild, super: child, expected: true},
+		{desc: "grandchild reaches the root through the chain", obj: grandChild, super: parent, expected: true},
+		{desc: "a map is not an instance of itself", obj: parent, super: parent, expected: false},
+		{desc: "a parent is not an instance of its child", obj: parent, super: child, expected: false},
+		{desc: "unrelated map with equal contents is not a match", obj: child, super: twin, expected: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			got, err := builtinInstanceof([]Token{test.obj, test.super}, nil)
+			assertNoErr(t, err)
+			if got != boolToken(test.expected) {
+				t.Fatalf("expected %v, got %v", boolToken(test.expected), got)
+			}
+		})
+	}
+}
+
+// TestBuiltinInstanceofErrors covers a non-map argument on either side and the
+// wrong argument count.
+func TestBuiltinInstanceofErrors(t *testing.T) {
+	m := mapToken{"a": intToken(1)}
+
+	_, err := builtinInstanceof([]Token{intToken(5), m}, nil)
+	assertErrContains(t, err, "first argument is not a map")
+
+	_, err = builtinInstanceof([]Token{m, intToken(5)}, nil)
+	assertErrContains(t, err, "second argument is not a map")
+
+	_, err = builtinInstanceof([]Token{m}, nil)
+	assertErrContains(t, err, "exactly two arguments")
+
+	_, err = builtinInstanceof([]Token{m, m, m}, nil)
+	assertErrContains(t, err, "exactly two arguments")
+}
+
 // TestBuiltinsThroughParse exercises len() and type() end-to-end via the public
 // Parse API. The value-returning call is wrapped in a comparison because the
 // bool-only Evaluate entry point returns bool.
@@ -149,6 +202,13 @@ func TestBuiltinsThroughParse(t *testing.T) {
 		{expr: `type(obj) == "map"`, payload: json.RawMessage(`{"obj":{"a":1}}`), expectedResult: true},
 		// extend() returns a (child) map, exercised end-to-end via type().
 		{expr: `type(extend(obj)) == "map"`, payload: json.RawMessage(`{"obj":{"a":1}}`), expectedResult: true},
+		// instanceof() tests $parent-chain membership: a map extended from obj is
+		// an instance of obj, but obj itself is not (the walk starts at the
+		// parent), and an unrelated map is not.
+		{expr: `instanceof(extend(obj), obj)`, payload: json.RawMessage(`{"obj":{"a":1}}`), expectedResult: true},
+		{expr: `instanceof(extend(extend(obj)), obj)`, payload: json.RawMessage(`{"obj":{"a":1}}`), expectedResult: true},
+		{expr: `instanceof(obj, extend(obj))`, payload: json.RawMessage(`{"obj":{"a":1}}`), expectedResult: false},
+		{expr: `instanceof(obj, other)`, payload: json.RawMessage(`{"obj":{"a":1},"other":{"a":1}}`), expectedResult: false},
 		// type() of a len() result: an int.
 		{expr: `type(len("ab")) == "int"`, payload: json.RawMessage("{}"), expectedResult: true},
 

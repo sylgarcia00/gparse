@@ -2,6 +2,7 @@ package gparse
 
 import (
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -42,7 +43,8 @@ var builtinFunctions = map[string]Function{
 
 	"sum": builtinSum,
 
-	"extend": builtinExtend,
+	"extend":     builtinExtend,
+	"instanceof": builtinInstanceof,
 
 	"pow": builtinPow,
 	"sin": builtinSin,
@@ -127,6 +129,61 @@ func builtinExtend(args []Token, scope mapToken) (Token, error) {
 	}
 
 	return m.getChildMap(), nil
+}
+
+// builtinInstanceof implements `instanceof(obj, super)`: cparse's map-inheritance
+// test (default_instanceof in typeSpecificFunctions.inc, where it is a map
+// method `obj.instanceof(super)`; gparse exposes it as a global taking the
+// receiver as the first argument, matching how the other type methods — len,
+// split, join, strip — are ported). It returns true when super appears anywhere
+// in obj's prototype chain, i.e. the $parent links that extend() builds (see
+// getChildMap and varToken.Resolve).
+//
+// Following cparse exactly, the walk starts at obj's parent (not obj itself), so
+// instanceof(obj, obj) is false while instanceof(extend(obj), obj) is true.
+// Chain membership is by map identity, not structural equality, mirroring
+// cparse's TokenMap operator== (a shared_ptr reference compare). Both arguments
+// must be maps; any other type is a RuntimeErr, mirroring cparse's asMap()
+// throwing on a non-map operand.
+func builtinInstanceof(args []Token, scope mapToken) (Token, error) {
+	if len(args) != 2 {
+		return nil, SyntaxErr("built-in function expects exactly two arguments", map[string]any{
+			"function": "instanceof",
+			"gotArgs":  len(args),
+		})
+	}
+
+	this, ok := args[0].(mapToken)
+	if !ok {
+		return nil, RuntimeErr("instanceof() first argument is not a map", map[string]any{
+			"argument": args[0],
+		})
+	}
+	super, ok := args[1].(mapToken)
+	if !ok {
+		return nil, RuntimeErr("instanceof() second argument is not a map", map[string]any{
+			"argument": args[1],
+		})
+	}
+
+	parent, ok := this["$parent"].(mapToken)
+	for ok {
+		if sameMapRef(parent, super) {
+			return boolToken(true), nil
+		}
+		parent, ok = parent["$parent"].(mapToken)
+	}
+
+	return boolToken(false), nil
+}
+
+// sameMapRef reports whether a and b refer to the same underlying map, matching
+// cparse's TokenMap operator== which compares the shared_ptr reference (identity)
+// rather than the map contents. Two structurally-equal but distinct maps are not
+// the same reference. This is the identity used by the $parent prototype chain
+// that extend() builds.
+func sameMapRef(a mapToken, b mapToken) bool {
+	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
 }
 
 // builtinMin implements `min(a, b, ...)`: the smallest of its numeral
