@@ -1,5 +1,10 @@
 package gparse
 
+import (
+	"io"
+	"os"
+)
+
 // registry is the immutable, per-call set of operators, precedences and
 // builtins the eval pipeline resolves against. It replaces the direct reads of
 // the package-level globals (operators, opPrecedence, builtinFunctions) so a
@@ -12,8 +17,11 @@ type registry struct {
 
 	// builtinsCopied, opsCopied and precCopied track whether the matching map
 	// is a copy this registry owns. defaultRegistry aliases the package-level
-	// maps by reference; the first registration that mutates one copies it (see
-	// the copy* helpers) so custom entries never leak into the globals.
+	// ops and prec maps by reference; the first registration that mutates one
+	// copies it (see the copy* helpers) so custom entries never leak into the
+	// globals. builtins is copied up front by registerPrint (defaultRegistry
+	// always installs the print closure into it), so it is already owned before
+	// any Args are applied.
 	builtinsCopied bool
 	opsCopied      bool
 	precCopied     bool
@@ -25,6 +33,13 @@ type registry struct {
 	// It is always owned by the registry (built fresh in defaultRegistry), so
 	// it can be written to directly when a custom op adds a novel rune.
 	opRunes map[rune]bool
+
+	// out is where the print builtin writes; nil means os.Stdout (resolved at
+	// call time by registerPrint's closure). It is set once from Args.Output when
+	// the registry is built (see applyArgs) and only read during evaluation, so
+	// it introduces no mutable process-global and stays safe for the concurrent
+	// reuse a frozen Parser promises.
+	out io.Writer
 }
 
 // defaultRegistry builds a registry seeded from the package-level defaults.
@@ -35,7 +50,26 @@ func defaultRegistry() *registry {
 		builtins: builtinFunctions,
 	}
 	reg.opRunes = deriveOpRunes(reg.ops)
+	reg.registerPrint()
 	return reg
+}
+
+// registerPrint installs the print builtin into this registry. print is the only
+// builtin whose behavior depends on per-registry state (its output writer), so it
+// cannot be a stateless entry in the shared package-level builtinFunctions map;
+// it is registered here instead, as a closure that reads reg.out at call time and
+// defaults to os.Stdout when unset. Registering it copies the builtins map this
+// registry owns (copyBuiltins), so a later Args.Builtins["print"] still collides
+// against it exactly like any other default builtin.
+func (reg *registry) registerPrint() {
+	reg.copyBuiltins()
+	reg.builtins["print"] = func(args []Token, scope mapToken) (Token, error) {
+		out := reg.out
+		if out == nil {
+			out = os.Stdout
+		}
+		return builtinPrint(out, args)
+	}
 }
 
 // copyOps ensures reg.ops is a copy owned by this registry before it is

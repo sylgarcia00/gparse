@@ -1,6 +1,7 @@
 package gparse
 
 import (
+	"io"
 	"maps"
 	"math"
 	"slices"
@@ -55,6 +56,13 @@ type Args struct {
 	// keys on, and handleOp resolves prefix vs postfix purely by position, so
 	// a dual registration would give one role an incoherent precedence.
 	RightUnary map[string]func(a any) (any, error)
+
+	// Output is where the print builtin writes. The zero value (nil) means
+	// os.Stdout. Set it to redirect or capture print output — e.g. a
+	// bytes.Buffer in a test — without touching any process-global state. It is
+	// read at evaluation time, so if one frozen Parser evaluates concurrently
+	// the writer must itself be safe for concurrent writes.
+	Output io.Writer
 }
 
 // BinaryOperator is one Args.Operators entry: a binary infix operator's
@@ -76,6 +84,11 @@ type BinaryOperator struct {
 // — and each map's keys are walked in sorted order, so which error surfaces
 // first is deterministic even though Go maps iterate in random order.
 func (reg *registry) applyArgs(args Args) error {
+	// Bind the print output writer (nil is fine: registerPrint's closure falls
+	// back to os.Stdout at call time). Set before any entries are registered so
+	// the field is in place regardless of which registrations run.
+	reg.out = args.Output
+
 	for _, name := range slices.Sorted(maps.Keys(args.Builtins)) {
 		if err := reg.registerBuiltin(name, args.Builtins[name]); err != nil {
 			return err

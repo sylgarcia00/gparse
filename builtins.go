@@ -1,6 +1,8 @@
 package gparse
 
 import (
+	"fmt"
+	"io"
 	"math"
 	"reflect"
 	"strconv"
@@ -15,6 +17,11 @@ import (
 // multi-argument call path that the "," (tuple) executor unblocks (see commaOp
 // in operators.go): a call like `min(a, b, c)` arrives here as a spread of one
 // arg per element.
+//
+// print is a default builtin too but is NOT listed here: it is the only builtin
+// that needs per-registry state (its output writer), so it is registered per
+// registry in defaultRegistry (see registerPrint) over a closure that binds the
+// writer, rather than as a stateless entry in this shared package-level map.
 var builtinFunctions = map[string]Function{
 	"len":     builtinLen,
 	"type":    builtinType,
@@ -106,6 +113,43 @@ func builtinType(args []Token, scope mapToken) (Token, error) {
 			"argument": arg,
 		})
 	}
+}
+
+// builtinPrint implements `print(...)`: it writes its arguments to w separated by
+// a single space, terminated by a newline, then returns noneToken — mirroring
+// cparse's default_print, which prints a space-separated line and returns
+// packToken::None(). Zero arguments print just the newline.
+//
+// A strToken argument is written as its RAW value, not its String() rendering:
+// strToken.String() JSON-quotes (see tokens.go), whereas cparse prints a STR via
+// asString() (the unquoted value), so quoting here would diverge. Every other
+// token kind is written via String() (cparse's item.str()), so an int prints as
+// `42`, a float via gparse's float formatting, a bool as `true`/`false`, none as
+// `None`, and a list/map via its bracketed repr.
+//
+// The output writer is a parameter (bound to the registry's writer by
+// registerPrint, defaulting to os.Stdout) rather than a hardcoded os.Stdout, so a
+// caller can redirect print via Args.Output and a test can capture it without any
+// process-global state. Arguments arrive already resolved (the evaluator resolves
+// variable and lazy tokens before a call), so no Resolver unwrap is needed here,
+// matching the other builtins.
+func builtinPrint(w io.Writer, args []Token) (Token, error) {
+	parts := make([]string, len(args))
+	for i, arg := range args {
+		if s, ok := arg.(strToken); ok {
+			parts[i] = string(s)
+			continue
+		}
+		parts[i] = arg.String()
+	}
+
+	if _, err := fmt.Fprintln(w, strings.Join(parts, " ")); err != nil {
+		return nil, RuntimeErr("print() failed to write output", map[string]any{
+			"error": err,
+		})
+	}
+
+	return noneToken{}, nil
 }
 
 // builtinExtend implements `extend(m)`: cparse's object-inheritance primitive

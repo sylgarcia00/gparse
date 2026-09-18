@@ -1,7 +1,10 @@
 package gparse
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"os"
 	"testing"
 )
 
@@ -1066,5 +1069,116 @@ func TestBuiltinStrPredicateErrors(t *testing.T) {
 			_, err = tc.fn([]Token{strToken("a"), intToken(1)}, nil)
 			assertErrContains(t, err, tc.name+"() second argument is not a string")
 		})
+	}
+}
+
+// TestBuiltinPrint exercises print() directly, capturing its output through an
+// injected io.Writer. It covers the raw-vs-repr distinction (a strToken prints
+// its raw value, every other kind its String() repr), the space separator and
+// trailing newline for multiple args, the zero-argument newline-only case, and
+// that the return value is always noneToken.
+func TestBuiltinPrint(t *testing.T) {
+	tests := []struct {
+		name string
+		args []Token
+		want string
+	}{
+		{name: "single string is raw not quoted", args: []Token{strToken("hello")}, want: "hello\n"},
+		// String() JSON-quotes a string; print must emit the raw value instead.
+		{name: "string with quotes stays raw", args: []Token{strToken(`a "b"`)}, want: "a \"b\"\n"},
+		{name: "single int repr", args: []Token{intToken(42)}, want: "42\n"},
+		{name: "single float repr", args: []Token{floatToken(3.5)}, want: "3.5\n"},
+		{name: "single bool repr", args: []Token{boolToken(true)}, want: "true\n"},
+		{name: "single none repr", args: []Token{noneToken{}}, want: "None\n"},
+		{name: "list repr", args: []Token{listToken{intToken(1), intToken(2)}}, want: "[1,2]\n"},
+		{
+			name: "multiple mixed args space separated",
+			args: []Token{strToken("a"), intToken(1), boolToken(false)},
+			want: "a 1 false\n",
+		},
+		{name: "zero args prints only newline", args: []Token{}, want: "\n"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			got, err := builtinPrint(&buf, test.args)
+			assertNoErr(t, err)
+
+			if _, ok := got.(noneToken); !ok {
+				t.Fatalf("expected noneToken return, got %v (%T)", got, got)
+			}
+			if buf.String() != test.want {
+				t.Fatalf("expected output %q, got %q", test.want, buf.String())
+			}
+		})
+	}
+}
+
+// TestBuiltinPrintThroughParse proves the end-to-end wiring: a parsed print(...)
+// call resolves to the registry-bound writer (set via Args.Output), prints the
+// expected line, and evaluates to noneToken. A JSON string field prints raw, and
+// print() with no args prints just a newline. It uses its own harness (rather
+// than TestBuiltinsThroughParse's boolean table) because print returns noneToken
+// and each case needs a per-run bytes.Buffer wired through Args.Output.
+func TestBuiltinPrintThroughParse(t *testing.T) {
+	tests := []struct {
+		expr    string
+		payload json.RawMessage
+		want    string
+	}{
+		{expr: `print("hello", 42)`, payload: json.RawMessage("{}"), want: "hello 42\n"},
+		{expr: `print(name)`, payload: json.RawMessage(`{"name":"Vini"}`), want: "Vini\n"},
+		{expr: `print(items)`, payload: json.RawMessage(`{"items":[1,2,3]}`), want: "[1,2,3]\n"},
+		{expr: `print()`, payload: json.RawMessage("{}"), want: "\n"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expr, func(t *testing.T) {
+			var buf bytes.Buffer
+			parser, err := NewParser(Args{Output: &buf})
+			assertNoErr(t, err)
+
+			expr, err := parser.ParseExpr(test.expr)
+			assertNoErr(t, err)
+
+			token, err := expr.Eval(jsonScope(t, test.payload))
+			assertNoErr(t, err)
+
+			if _, ok := token.(noneToken); !ok {
+				t.Fatalf("expected noneToken result, got %v (%T)", token, token)
+			}
+			if buf.String() != test.want {
+				t.Fatalf("expected output %q, got %q", test.want, buf.String())
+			}
+		})
+	}
+}
+
+// TestBuiltinPrintDefaultsToStdout covers the nil-writer default: with no
+// Args.Output the print builtin writes to os.Stdout. Captured via an os.Pipe.
+func TestBuiltinPrintDefaultsToStdout(t *testing.T) {
+	orig := os.Stdout
+	reader, writer, err := os.Pipe()
+	assertNoErr(t, err)
+	os.Stdout = writer
+	defer func() { os.Stdout = orig }()
+
+	parser, err := NewParser(Args{})
+	assertNoErr(t, err)
+	expr, err := parser.ParseExpr(`print("to stdout")`)
+	assertNoErr(t, err)
+	_, err = expr.Eval(jsonScope(t, json.RawMessage("{}")))
+	assertNoErr(t, err)
+
+	if closeErr := writer.Close(); closeErr != nil {
+		t.Fatalf("failed to close pipe writer: %v", closeErr)
+	}
+	os.Stdout = orig
+
+	out, err := io.ReadAll(reader)
+	assertNoErr(t, err)
+	if string(out) != "to stdout\n" {
+		t.Fatalf("expected output %q, got %q", "to stdout\n", string(out))
 	}
 }
