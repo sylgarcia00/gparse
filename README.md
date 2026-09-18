@@ -28,8 +28,56 @@ Further along than "work in progress" suggests. Working today:
 
 Deliberately absent (mirroring cparse): ordering comparisons between strings.
 
-Open design questions, not yet decided: first-class boolean literals
-(`true`/`false` currently lex as strings, as cparse leaves room to do).
+## Architecture
+
+gparse is a flat single-package library — `package gparse` at the repo root, no
+hexagonal / ports-and-adapters split and no internal layering. That's a
+deliberate choice, not an omission: this is a small embeddable parser, and a
+folder tree of ports and adapters would be ceremony around a pipeline that fits
+comfortably in one package. The one boundary I did draw out is the `jsonscope/`
+subpackage. It binds a JSON payload as a `Scope`, which keeps JSON *input* out of
+the core: the evaluator decodes no JSON of its own — variable data reaches it only
+through the `Scope` interface — so anyone who wants a different source (a Go map, a
+struct, a database row) implements that interface without dragging JSON parsing
+along. (The core still uses `encoding/json` internally, but only to escape string
+values when rendering them, not to read input.)
+
+Data flows one way: a source string is tokenized, the tokens feed the
+shunting-yard builder into RPN (Reverse Polish Notation), and the RPN is
+evaluated against a `Scope`, with operators and builtins resolved through a
+per-call registry.
+
+The core, one line per file:
+
+- `tokens.go` — the `Token` interface and its concrete kinds (int, float,
+  string, bool, none, variable, reference, operator), plus the lazy `Resolver`
+  unwrapping used during variable lookup.
+- `rpn_builder.go` — the shunting-yard algorithm itself: it turns a token stream
+  into RPN, ordering operators by precedence and handling unary operators and
+  brackets.
+- `eparser.go` — the parse/eval entry point: `Parse`/`NewParser` compile a
+  string, and `Expr.Eval` walks the resulting RPN against a `Scope`.
+- `operators.go` — operator semantics (comparison, arithmetic, boolean, bitwise,
+  indexing, call, comma) and the C++-derived precedence table; each operator
+  type-switches on its operands. `operators_test.go` pins this behavior against
+  cparse's spec.
+- `options.go` and `registry.go` — the extensibility surface for user-defined
+  operators and builtins: `options.go` exposes the `Args` struct and validates
+  it, while `registry.go` holds the immutable, per-call set of operators,
+  precedences and builtins the pipeline resolves against (copy-on-write over the
+  package defaults, so custom entries never leak into shared globals).
+- `scope.go` — the source-agnostic `Scope` interface, the `MapScope` adapter,
+  and the scalar-boxing seam (`NewString`/`NewFloat`/`NewBool`) a host binding
+  builds values with; `jsonscope/` is one such binding, decoding each JSON field
+  only when an expression actually touches it.
+- `builtins.go` — the default built-in functions (`len`, `min`, `str`, `upper`,
+  and the rest listed under *Status*).
+- `containers.go` — list, map and tuple literals, and the `Indexable`/`Sequence`
+  container interfaces the evaluator indexes through.
+- `reserved_keywords.go` — identifier-shaped literals (`true`/`false`) that lex
+  to a fixed `Token` instead of being resolved as scope variables.
+- `errors.go` — the structured `Err` type and its constructors (`SyntaxErr`,
+  `RuntimeErr`, `ParserErr`, `InternalErr`).
 
 ## Extending gparse
 
