@@ -3,7 +3,8 @@
 //
 // It is gparse's batteries-included JSON door: the core language stays
 // source-agnostic (it evaluates over a gparse.Scope), and this package adapts
-// JSON to that interface without the core ever depending on encoding/json.
+// JSON to that interface so decoding JSON input lives here, not in the core's
+// evaluation path.
 package jsonscope
 
 import (
